@@ -68,8 +68,9 @@ points from 0 to 100, not a fraction from 0 to 1.
 
 The human version has **20,100 mismatches out of 50,000 (40.2%)** against the
 original labels. Its percentage cannot be freely adjusted without changing the
-benchmark. `--noise-percent 20` therefore fails rather than generating a new 20%
-human dataset. The legacy `noise_rate` argument in the official CIFAR100 Python
+benchmark. Pointing at the official cache with `--noise-percent 20` therefore fails
+rather than generating a new 20% human dataset. To create a separately identified
+controlled derivative, use the preparation stage below. The legacy `noise_rate` argument in the official CIFAR100 Python
 constructor does not control its human-label loading or empirical-matrix sampling;
 we do not expose it as a fake noise-strength control.
 
@@ -93,18 +94,24 @@ the percentage assertion still checks the complete original training labels.
 From the repository directory:
 
 ```bash
-cd ~/Project_DPCO/DPCO
-source ../.venv/bin/activate
-python -m pip install -e '.[train,data]'
+cd /home/jason_chia925_gmail_com/Project_DPCO/DPCO
+py="/home/jason_chia925_gmail_com/Project_DPCO/.venv/bin/python"
 
 # Inspect pinned URLs/checksums without downloading or creating a cache.
-python scripts/prepare_cifar100n.py --stage plan
+"$py" scripts/prepare_cifar100n.py --stage plan
 
 # Download original images plus official labels/mapping; verify and prepare.
-python scripts/prepare_cifar100n.py --stage download
+mkdir -p results/logs
+log="results/logs/prepare_cifar100n_$(date +%Y%m%d_%H%M%S).log"
+nohup "$py" -u scripts/prepare_cifar100n.py --stage download \
+  > "$log" 2>&1 < /dev/null &
+pid=$!
+printf '%s\n' "$pid" > "$log.pid"
+echo "PID=$pid LOG=$log"
+tail -f "$log"
 
-# Recheck immutable prepared files without networking.
-python scripts/prepare_cifar100n.py --stage verify
+# After completion, recheck immutable prepared files without networking.
+"$py" scripts/prepare_cifar100n.py --stage verify
 ```
 
 Default destination is outside the code repository:
@@ -136,6 +143,79 @@ Use `--output-dir /absolute/path` for another preparation directory. Training's
 matching override is `--data-dir /absolute/path`. Normally training only reads
 prepared data; the opt-in `--download` permits automatic preparation in the child.
 Preparation imports NumPy but never JAX, Torch, TensorFlow or a TPU runtime.
+
+## Controlled global human-noise percentage
+
+The permanent preparation entry is `scripts/prepare_cifar100n.py --stage controlled`,
+implemented by `src/data/cifar100n_controlled.py`. It replaces the earlier inline
+Python recipe. It requires an already verified original human-label cache, a separate
+explicit output directory, and `--target-noise-percent`. It never downloads data or
+changes the source cache. The original `plan`, `download`, and `verify` stages retain
+their meanings; generation-only arguments on another stage fail rather than being ignored.
+
+For a requested global percentage p, the protocol is:
+
+1. Find the source indices whose human labels differ from their original labels.
+2. Set K = floor(N * p / 100 + 0.5). Reject a percentage above the source mismatch rate.
+3. Use `--selection-seed` (default 0), explicit NumPy PCG64, and uniform sampling
+   without replacement to retain K erroneous human labels. Restore all other labels
+   to their original values. Selection is global, not independently fixed per class.
+4. Keep every image, all original labels and the original test set. Publish an
+   independent immutable cache with observed labels in the existing `noise_label`
+   field, checksums, and provenance identifying `controlled_human_error_retention`.
+
+On the official 50,000-image source, p=20 retains 10,000 of 20,100 human errors and
+restores 10,100; the clean/corrupted evaluation groups become 40,000/10,000. This is
+a **controlled derivative using human error targets**, not an official 20% release
+or 20% newly sampled random incorrect classes. Original-source human labels remain
+in the source cache; its manifest hash connects the derivative to that source.
+Across 40.2% and 20%, the clean groups differ, so their clean metrics do not evaluate
+the same set of images. Compare methods within the same fixed derivative and add
+an Adam baseline at that same percentage.
+
+```bash
+cd /home/jason_chia925_gmail_com/Project_DPCO/DPCO
+mkdir -p results/logs
+log="results/logs/prepare_cifar100n_human20_s0_$(date +%Y%m%d_%H%M%S).log"
+
+nohup /home/jason_chia925_gmail_com/Project_DPCO/.venv/bin/python \
+  -u scripts/prepare_cifar100n.py --stage controlled \
+  --source-dir /home/jason_chia925_gmail_com/Project_DPCO/data/cifar100n \
+  --output-dir /home/jason_chia925_gmail_com/Project_DPCO/data/cifar100n_human20_s0 \
+  --target-noise-percent 20 --selection-seed 0 \
+  > "$log" 2>&1 < /dev/null &
+pid=$!
+printf '%s\n' "$pid" > "$log.pid"
+echo "PID=$pid LOG=$log"
+tail -f "$log"
+```
+
+Completion prints `controlled_human_ready` with the measured percentage/count and
+manifest identity. Repeating the command verifies and reuses a matching cache;
+it does not regenerate labels. It also accepts the earlier inline recipe's cache
+after checking source identity, selection, image hashes and labels. Conflicting,
+corrupt or unfinished caches fail without overwriting their contents. Independent
+image arrays cost about another 184 MB on the official dataset. Provenance records
+the source hash, requested percentage, actual error counts, seed, retained-index
+hash, RNG and NumPy version. Keep this cache to reuse the exact labels across runs;
+the selection hash detects divergence rather than silently accepting RNG changes.
+
+Training still uses `--noise-percent` as an **assertion**. For example, retain the
+other training arguments and use:
+
+```text
+--data-dir /home/jason_chia925_gmail_com/Project_DPCO/data/cifar100n_human20_s0
+--noise-type noisy100 --is-human --noise-percent 20 --no-download
+```
+
+Do not pass `--target-noise-percent` to the training runner. The selection seed is
+independent of training `--seeds 42`; all methods/betas should point to the same
+prepared cache. For a percentage not representable as an integer number of images,
+the manifest reports the rounded **actual** rate; assert that value at training.
+Rates of 0 and the full source rate are also supported. A derived cache cannot be
+used as the source of another derivative; always select from the original human cache.
+Per-run names currently omit CIFAR noise percentage: retain the suite log and
+`results/logs/<run_name>/metadata.json` (data path, actual percentage, manifest hash).
 
 ## Shared training entry
 

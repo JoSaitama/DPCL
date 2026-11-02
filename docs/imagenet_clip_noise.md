@@ -17,6 +17,52 @@
 
 ## 服务器准备命令（20%示例）
 
+### 新服务器尚无ImageNet图片缓存时
+
+`sqlite3.OperationalError: unable to open database file` 出现在source_description阶段时，表示脚本尚未成功打开输入图片库，不能据此判断CLIP安装失败，也不能仅凭这一异常断定必须重下载；缺缓存、data-dir错误、配置指纹不同或权限问题均可能造成该错误。`--download-weights`仅下载CLIP权重，不下载ImageNet图片。CIFAR100N/MNIST数据也不能代替该图片库。
+
+可先用 `find ../data -type f -name images.sqlite` 查找现有文件；如旧Project_SAGE有数据，也可检查其data目录。全量源身份须与当前配置一致，文件名相同或仅有smoke子集不够。当前仓库所给100类manifest/HF版本对应子目录 `a7b8eb270c64aa63796acee9/`，该值会随配置改变；下面命令动态计算，不硬编码目录。
+
+如没有匹配的完整缓存，可单独调用现有准备器，**不启动模型训练**。需使用已获 `ILSVRC/imagenet-1k` 访问许可的HF账号登录或已设置HF_TOKEN；准备器复用现有凭据，不在命令/日志中写token。来源为HF的1K源，筛选并保留100类；首次准备可能扫描较大来源，网络流量不等于最终缓存大小。
+
+```bash
+cd /home/jason_chia925_gmail_com/Project_DPCO/DPCO
+mkdir -p results/logs
+log="results/logs/imagenet100_prepare_$(date +%Y%m%d_%H%M%S).log"
+
+nohup bash -c '
+  set -euo pipefail
+  py="/home/jason_chia925_gmail_com/Project_DPCO/.venv/bin/python"
+  "$py" -m pip install -e ".[train]"
+  exec "$py" -u - << "PY"
+import json
+from pathlib import Path
+from src.config import load_config
+from src.data.imagenet_hf import DataPlan, label_mapping, prepare
+
+root = Path.cwd()
+config = load_config(root / "configs/tpu/dpco/imagenet100_resnet50.toml")
+mapping, digest = label_mapping(config.data, root)
+plan = DataPlan(config.data.hf_repo_id, config.data.hf_revision, mapping, digest)
+data = root.parent / "data"
+print(json.dumps({"event": "imagenet_prepare_start", "database": str(data / plan.fingerprint[:24] / "images.sqlite")}), flush=True)
+images = prepare(plan, data, progress=lambda **fields: print(json.dumps({"event": "imagenet_prepare_progress", **fields}), flush=True))
+try:
+    print(json.dumps({"event": "imagenet_data_ready", "database": str(images.path), "counts": images.counts}), flush=True)
+finally:
+    images.close()
+PY
+' > "$log" 2>&1 < /dev/null &
+pid=$!
+printf '%s\n' "$pid" > "$log.pid"
+echo "PID=$pid LOG=$log"
+tail -n 30 "$log"
+```
+
+只有看到 `imagenet_data_ready`，且train=126689、validation=5000后，才继续下面的CLIP加噪命令。准备中断可用相同参数重跑，已提交的数据和源游标会复用，但可能重新读取来源前缀，不能保证网络字节级断点续传。已完成的匹配缓存会直接复用。若现有缓存处于其他目录，可用加噪脚本的 `--image-db` 指定，并在训练时保持对应的data-dir与配置身份一致；不要仅为绕过错误使用不匹配的数据。
+
+### 图片缓存已就绪时运行CLIP
+
 先确保现有 ImageNet100 `images.sqlite` 已完整准备好。本脚本读取现有缓存，**不下载 ImageNet 图片**。默认根据配置/DataPlan指纹定位缓存；也可用 `--image-db /absolute/path/images.sqlite` 明确指定。训练仍会核对该缓存是否与训练配置完全匹配。
 
 ```bash
@@ -34,7 +80,8 @@ nohup bash -c '
     --stage all \
     --config configs/tpu/dpco/imagenet100_resnet50.toml \
     --data-dir /home/jason_chia925_gmail_com/Project_DPCO/data \
-    --output-dir results/files/imagenet100_clip_l14_noise20_s0 \
+    --output-dir /home/jason_chia925_gmail_com/Project_DPCO/data/imagenet100_clip_l14_noise20_s0 \
+    --audit-dir results/files/imagenet100_clip_l14_noise20_s0/audit \
     --label-noise-percent 20 --noise-seed 0 \
     --sampling-temperature 0.2 --batch-size 32 \
     --device cpu --download-weights \
@@ -59,8 +106,8 @@ mkdir -p results/logs
 log="results/logs/imagenet100_clip_noise10_$(date +%Y%m%d_%H%M%S).log"
 nohup /home/jason_chia925_gmail_com/Project_DPCO/.venv/bin/python \
   -u scripts/prepare_imagenet_clip_noise.py --stage generate \
-  --scores-dir results/files/imagenet100_clip_l14_noise20_s0/clip_scores \
-  --output-dir results/files/imagenet100_clip_l14_noise10_s0 \
+  --scores-dir ../data/imagenet100_clip_l14_noise20_s0/clip_scores \
+  --output-dir ../data/imagenet100_clip_l14_noise10_s0 \
   --label-noise-percent 10 --noise-seed 0 --sampling-temperature 0.2 \
   > "$log" 2>&1 < /dev/null &
 pid=$!
@@ -71,7 +118,7 @@ tail -n 30 "$log"
 
 ## 文件和人工抽查
 
-所有本次准备、检查输出放在 `results/files/<noise_name>/`，后台日志/PID放在 `results/logs/`。
+按2026-10-31更新的协议，后续复用的数据统一放在与 `DPCO/` 同级的 `../data/`。本例数据目录是 `../data/imagenet100_clip_l14_noise20_s0/`，包括固定标签、发布manifest和默认的 `clip_scores/`；下表前五项均相对于该数据目录。人工抽查报告通过显式 `--audit-dir` 放在 `results/files/<noise_name>/audit/`，后台日志/PID仍放在 `results/logs/`。脚本已支持这些绝对或相对路径，无需更改训练逻辑；若省略 `--audit-dir`，程序仍沿用output-dir/audit，建议按示例显式指定检查输出目录。
 
 | 文件 | 内容 |
 |---|---|
@@ -80,9 +127,9 @@ tail -n 30 "$log"
 | `labels.npz` / `labels.csv` | sample ID、原标签、训练污染标签、mask、候选类、概率、难度、原缓存source_index和图片字节SHA256 |
 | `summary.json` | 每类总数/改标数、整体实际率、CLIP本身自然top1错误率 |
 | `transition.csv` | 实际原类→污染类的计数 |
-| `audit/index.html` | 图片与原类别/训练类别/候选错误类/概率的离线抽查页 |
-| `audit/review.csv` | 同一抽样清单，预留 `human_plausible` / `notes` 供人工记录 |
-| `audit/audit.json` | 抽查seed、样本ID及被审查manifest哈希 |
+| `results/files/<noise_name>/audit/index.html` | 图片与原类别/训练类别/候选错误类/概率的离线抽查页 |
+| `results/files/<noise_name>/audit/review.csv` | 同一抽样清单，预留 `human_plausible` / `notes` 供人工记录 |
+| `results/files/<noise_name>/audit/audit.json` | 抽查seed、样本ID及被审查manifest哈希 |
 
 `--audit-count 100` 表示从已污染/未污染两组**各均匀抽取最多100张**，默认共200张；不是只挑最容易解释的例子。可把整个 audit/ 下载到Mac，浏览器打开 index.html。页面展示原图缩略图；CLIP实际评分使用官方中心裁剪，二者视野可能不同。分组均匀抽样不等于全体样本均匀抽样，不能未经权重修正用这200张估计总体占比。
 
@@ -93,7 +140,7 @@ tail -n 30 "$log"
 ```bash
 /home/jason_chia925_gmail_com/Project_DPCO/.venv/bin/python \
   scripts/prepare_imagenet_clip_noise.py --stage verify \
-  --output-dir results/files/imagenet100_clip_l14_noise20_s0
+  --output-dir ../data/imagenet100_clip_l14_noise20_s0
 ```
 
 ## 接入现有Adam训练套件
@@ -103,7 +150,7 @@ tail -n 30 "$log"
 ```text
 --config configs/tpu/dpco/imagenet100_resnet50.toml
 --methods adam dpco_filter dpco_flip
---noise-manifest results/files/imagenet100_clip_l14_noise20_s0/noise_manifest.json
+--noise-manifest ../data/imagenet100_clip_l14_noise20_s0/noise_manifest.json
 ```
 
 `--noise-manifest` 自动选择 `mode=noisy, noise_type=clip_idn, is_human=false`。此阶段不要传生成用的 `--label-noise-percent`、`--noise-seed`；原比例与seed从不可变manifest读取，训练seed只控制初始化/数据顺序。`--noise-percent`仍是对**实际**错标率的断言，不负责生成标签；因整数取整通常不能直接断言20.000000%。保持现有ResNet50、Adam、reference beta和训练预算参数；本功能不自动启动或选定训练预算。
@@ -122,3 +169,59 @@ tail -n 30 "$log"
 ImageNet的best checkpoint仍按独立干净validation的准确率选择，不能按训练集原标签指标挑选；这里的“原标签”指基准标注，不保证每张图片的语义真值都正确。
 
 参考：[OpenAI官方CLIP接口与预处理](https://github.com/openai/CLIP/blob/d05afc436d78f1c48dc0dbf8e5980a9d471f35f6/clip/clip.py)。本地测试使用小型合成图片、模拟预测器和微型ResNet，不能代替真实L/14与ImageNet100的资源/噪声合理性检查。
+
+## reference beta=0.9/0.95、训练seed=42的首轮控制实验
+
+这是基于此前CIFAR100N训练设置的初始建议，不是已验证的ImageNet100最优配方。固定20%污染标签文件，ResNet50随机初始化、全局batch128、Adam lr=3e-4、cosine衰减到1e-6、beta1=.9/beta2=.999/epsilon=1e-8、L2=0。训练seed42控制初始化和数据顺序，污染标签生成seed仍是manifest中的0，训练时不要传--noise-seed42。
+
+126689条训练样本、drop_last、batch128得到每个迭代epoch 989步；取200个迭代epoch共197800步。日志按samples_seen/N计算时约199.85 epoch，两种口径略有差异。每4945步（约5轮）做干净validation和全部训练组评价，每9890步（约10轮）保存latest；沿用initial/分位点/best/final保存。主要看clean训练组CE、all_original训练acc和独立干净validation acc，不按污染标签train acc单独判断优劣。
+
+共5组：Adam一次，Flip/Filter分别各取reference beta .9、.95。Adam不使用reference beta，不重复跑相同baseline；flip=-1/filter=0由方法别名确定，不混用全局negative-weight参数。beta .9/.95分别在每步保留90%/95%历史EMA、加入10%/5%当前原始batch梯度，独立于Adam的两个beta。
+
+```bash
+cd /home/jason_chia925_gmail_com/Project_DPCO/DPCO
+mkdir -p results/logs
+log="results/logs/imagenet100_clip20_b09_b095_s42_$(date +%Y%m%d_%H%M%S).log"
+
+nohup bash -c '
+  set -euo pipefail
+  py="/home/jason_chia925_gmail_com/Project_DPCO/.venv/bin/python"
+  data="/home/jason_chia925_gmail_com/Project_DPCO/data"
+  noise_dir="$data/imagenet100_clip_l14_noise20_s0"
+
+  "$py" -u scripts/prepare_imagenet_clip_noise.py \
+    --stage verify --output-dir "$noise_dir"
+
+  common=(
+    --config configs/tpu/dpco/imagenet100_resnet50.toml
+    --dataset imagenet100 --model resnet50
+    --data-dir "$data"
+    --noise-manifest "$noise_dir/noise_manifest.json"
+    --seeds 42 --steps 197800 --batch-size 128
+    --optimizer adam
+    --lr 3e-4 --lr-schedule cosine --min-lr 1e-6
+    --adam-beta1 0.9 --adam-beta2 0.999 --adam-epsilon 1e-8
+    --l2-coefficient 0
+    --eval-every-steps 4945
+    --checkpoint-every-steps 9890
+    --no-theorem-probes --no-diagnostics
+    --wait
+  )
+
+  "$py" -u scripts/run_suite.py "${common[@]}" --methods adam
+
+  for beta in 0.9 0.95; do
+    "$py" -u scripts/run_suite.py "${common[@]}" \
+      --methods dpco_flip dpco_filter --reference-beta "$beta"
+  done
+' > "$log" 2>&1 < /dev/null &
+
+pid=$!
+printf '%s\n' "$pid" > "$log.pid"
+echo "PID=$pid LOG=$log"
+tail -f "$log"
+```
+
+三次套件调用都等待完成，5个训练顺序使用同一台服务器的TPU，不并发争抢设备。每组仍有results/logs/<run_name>/stdout.log，指标在results/files、checkpoint在results/runs。nohup仅防终端断开，不自动在机器重启或任务失败后恢复；失败后不能直接重跑整段并声称是原实验恢复，应按已有run_name与checkpoint恢复协议处理。
+
+上述命令仅经过本地dry-run参数核验，没有启动正式实验。Adam两个beta采用[原论文Algorithm1的常用默认值](https://arxiv.org/pdf/1412.6980)，本项目的lr/步数/reference beta预算是控制实验设计，不是该论文或AAAI工作的ImageNet标准。单seed42先看机制趋势，不能据此声明统计显著优于Adam。
