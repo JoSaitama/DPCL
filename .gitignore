@@ -30,3 +30,9 @@ dist/
 # Local development protocols and research notes stay outside this repository.
 AGENTS.md
 AGENTS.local.md
+
+# Development Markdown is maintained in the sibling ../DevMD/ directory.
+/doc/
+/docs/
+/DPCO_dev.md
+/DevMD/

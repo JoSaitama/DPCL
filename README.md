@@ -3,14 +3,18 @@
 Research code for SGD and sample-contribution correction with task/reference/method
 separation. Repository code, comments and documentation use English.
 
+Development protocols, research discussions, and detailed implementation notes are
+maintained locally in the sibling `../DevMD/` directory, outside this code repository.
+The repository keeps its README files and third-party license notices.
+
 ## Current stage
 
-The new [DPCO + Adam implementation](docs/dpco_adam.md) supports ordinary Adam
+The new DPCO + Adam implementation supports ordinary Adam
 and a current-inclusive raw-gradient EMA reference with configurable negative
 contributions: `--method dpco --negative-weight 0` filters, `-1` flips, and other
 finite weights are accepted.
 
-[CIFAR-100N preparation and training](docs/cifar100n.md) now connects the authors'
+CIFAR-100N preparation and training now connects the authors'
 human annotations to the same three-method Adam flow, native 32x32 ResNets, and
 fixed clean/corrupted ordinary-CE evaluation. Use
 `python scripts/prepare_cifar100n.py --stage plan` and
@@ -19,7 +23,7 @@ noise percentage is measured (40.2%), not an adjustable corruption generator.
 The existing ImageNet preset remains `configs/tpu/dpco/imagenet100_resnet50.toml`;
 synthetic noise injection into ImageNet is still separate planned work.
 
-[MNIST preparation and controlled experiments](docs/mnist.md) now use the same
+MNIST preparation and controlled experiments now use the same
 Adam/EMA/filter/flip flow, with native grayscale images and fixed synthetic labels.
 The default `configs/tpu/mnist/dpco_adam.toml` selects a small no-BN CNN and 20%
 corruption; `--label-noise-percent` controls this generator independently of the
@@ -28,7 +32,7 @@ with `--model`: CIFAR also accepts the existing `resnet50`/`resnet101` models or
 the native-stem `cifar_resnet50`, alongside 18/34. Model names retain distinct
 architectures rather than silently switching stems.
 
-[CNWL Red Mini-ImageNet](docs/cnwl.md) connects the author's natural web-noise
+CNWL Red Mini-ImageNet connects the author's natural web-noise
 splits to Adam/EMA/filter/flip at 84x84. `--cnwl-noise-percent` selects a released
 noise level; it never generates labels. Prepare with `scripts/prepare_cnwl.py`
 and inspect `bash run_cnwl_suite.sh --dry-run`. Shared clean validation and
@@ -36,13 +40,13 @@ clean/noisy training-group metrics are recorded; web images have no fabricated
 original-class labels. Official metadata/URLs and licensed ImageNet sources are
 required; source availability is checked without dropping missing samples.
 
-[Opt-in TPU mechanism checks](docs/tpu_mechanisms.md) extend the real classification
+Opt-in TPU mechanism checks extend the real classification
 suite with both references, absolute LR candidates, a genuinely fixed train-mode
 bank, finite-bank moments and continuous-window accounting. They are off by
 default. `run_dpco_mechanism_suite.sh` is the separate TPU wrapper; the existing
 synthetic theory suite remains CPU-only. Development tests do not certify TPU.
 
-An independent [CPU theory/LR validation suite](docs/theory_validation.md) tests
+An independent CPU theory/LR validation suite tests
 the original SGD/DPCO-E/DPCO-L on smooth synthetic classification data, with
 analytic counterexamples, conditional moments and full-target cumulative bounds.
 Run `./run_dpco_theory_suite.sh --dry-run` to inspect its grid. It does not launch
@@ -61,17 +65,17 @@ and launcher guards. They do not certify TPU/libtpu startup, isolation, throughp
 accuracy or convergence. The first server smoke must verify those hardware properties.
 Pilot learning rate/budgets are not experimentally tuned classification recipes.
 
-See [worker0 TPU protocol](docs/tpu_training.md) for setup, prerequisites, data costs,
-real startup commands, and troubleshooting boundaries. See [recording contract](docs/recording.md)
+See worker0 TPU protocol for setup, prerequisites, data costs,
+real startup commands, and troubleshooting boundaries. See recording contract
 for metric/checkpoint definitions.
 
-[iNaturalist 2021 preparation and training](docs/inaturalist_subset.md) supports the
+iNaturalist 2021 preparation and training supports the
 fixed 140k-train/20k-validation proportional selection from official full data.
 `run_inaturalist_suite.sh` reads the completed local subset without HF access,
 another download or an image copy. It shares the existing trainer, methods,
 metrics, status TSV and checkpoint implementation.
 
-[Real-update training diagnostics](docs/training_diagnostics.md) provides optional
+Real-update training diagnostics provides optional
 early-step update checks, paired source-batch losses and transfer to other training
 batches. Enable with `--diagnostics` through either shell suite; default is off.
 The observer preserves the selected optimizer and original compiled training step.
@@ -127,11 +131,11 @@ Use `--diagnostics` for the new modes. Legacy `--theorem-probes` remains restric
 to the original full DPCO method and is not silently reinterpreted. Full-DPCO
 counterfactuals remain in diagnostic_paired/transfer; diagnostic_policy records
 the active policy versus SGD, with alpha-scaled objective gain and the real policy
-endpoint at scale 1. See [diagnostic semantics](docs/training_diagnostics.md).
+endpoint at scale 1. See diagnostic semantics.
 
 ## Exported CSV guide and local training plots
 
-See [the result CSV guide](docs/result_csv_guide.md) for every stream's fields,
+See the result CSV guide for every stream's fields,
 T1/T2/T3 scope, active-policy versus full-DPCO candidates, and Mac instructions.
 `scripts/plot_training_results.py` reads exported CSV/metadata without importing
 JAX or training code. It compares initial LRs by line style, uses blue for SGD,
@@ -383,7 +387,7 @@ The exponent is fixed at one half. It has no warmup, floor, switch point or tota
 budget dependence; it does not force the final rate to zero. Both the compiled
 update and host-side CSV/probe rate use the same schedule implementation. Constant
 remains the default. The bounded theory-motivated comparison and its limitations
-are documented in [TPU mechanisms](docs/tpu_mechanisms.md#predetermined-inverse-square-root-comparison-2026-10-25).
+are documented in TPU mechanisms.
 New cosine/inverse_sqrt run directory names include the schedule immediately
 before the timestamp, across logs/files/runs and lifecycle records. Constant
 names retain their original format; resume continues to use the explicit saved name.
