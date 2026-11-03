@@ -26,7 +26,7 @@ def write_csv(path, rows):
         writer.writerows(rows)
 
 
-def fixture(directory, method=None):
+def fixture(directory, method=None, optimizer="adam"):
     directory.mkdir(parents=True)
     rows = [dict(step=i + 1, train_ce=ce, train_top1=acc, valid_batch_size=count,
                  elapsed_wall_s=0.)  # Dispatch timestamps must not drive time plots.
@@ -38,10 +38,10 @@ def fixture(directory, method=None):
                for end, count, duration, wall in [(2, 2, .4, 10.), (3, 1, .5, 10.7), (6, 3, .6, 12.)]]
     write_csv(directory / "timing.csv", timing)
     if method is not None:
-        config = {"training": {"optimizer": "adam", "learning_rate": .0003},
-            "method": {"name": "adam" if method == "adam" else "dpco",
+        config = {"training": {"optimizer": optimizer, "learning_rate": .0003},
+            "method": {"name": method if method in ("adam", "sgd") else "dpco",
                        "negative_weight": 0 if method == "filter" else -1},
-            "reference": {"name": "loss" if method == "adam" else "ema", "beta": .99}}
+            "reference": {"name": "loss" if method in ("adam", "sgd") else "ema", "beta": .99}}
         path = directory.parent.parent / "logs" / directory.name
         path.mkdir(parents=True)
         (path / "metadata.json").write_text(json.dumps({"config": config}))
@@ -196,6 +196,36 @@ class DPCOTrainingPlotTests(unittest.TestCase):
             notes = plots.comparison_notes(runs)
             self.assertTrue(any("fingerprints differ" in note for note in notes))
             self.assertTrue(any("training" in note for note in notes))
+
+    def test_sgd_training_mode_keeps_labels_styles_and_csv_identity(self):
+        import matplotlib
+        matplotlib.use('Agg')
+        import matplotlib.pyplot as plt
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            args, data = [], {}
+            for method in ('sgd', 'flip', 'filter'):
+                path = root / 'results/files' / method
+                fixture(path, method, optimizer='sgd')
+                run = plots.load_run(method, path, optimizer='sgd')
+                data[method] = plots.curves(run, 1)
+                args.extend([f'--{method}-dir', str(path)])
+            fig = plots.make_figure(data, 'step', 'accuracy', 'Step', 'Acc', time_axis='wall', show_raw=False, plt=plt)
+            try:
+                self.assertEqual([t.get_text() for t in fig.axes[0].get_legend().get_texts()],
+                                 ['SGD', 'DPCO Flip', 'DPCO Filter'])
+                self.assertEqual([line.get_color() for line in fig.axes[0].lines],
+                                 ['#1f77b4', '#d62728', '#ff7f0e'])
+            finally:
+                plt.close(fig)
+            with patch.object(plots, 'ROOT', root):
+                output = plots.main(args + ['--formats', 'png', '--dpi', '60', '--output-name', 'sgd_training'])
+            self.assertEqual(len(list(output.glob('*.png'))), 5)
+            manifest = json.loads((output / 'plot_manifest.json').read_text())
+            self.assertEqual(manifest['optimizer'], 'sgd')
+            self.assertEqual(manifest['comparison_notes'], [])
+            with (output / 'step_curves.csv').open() as handle:
+                self.assertEqual({r['method'] for r in csv.DictReader(handle)}, {'sgd', 'flip', 'filter'})
 
 
 if __name__ == "__main__":

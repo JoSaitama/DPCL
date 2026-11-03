@@ -25,7 +25,7 @@ def write_csv(path, rows):
         writer.writerows(rows)
 
 
-def fixture(directory, offset_s=0, seed=None, method="adam"):
+def fixture(directory, offset_s=0, seed=None, method="adam", optimizer="adam"):
     directory.mkdir(parents=True)
     evaluation, groups = [], []
     for step, base_wall in ((0, 60), (10, 180), (20, 300)):
@@ -42,8 +42,8 @@ def fixture(directory, offset_s=0, seed=None, method="adam"):
     write_csv(directory / "evaluation.csv", evaluation)
     write_csv(directory / "group_evaluation.csv", groups)
     if seed is not None:
-        config = {"seed": seed, "training": {"optimizer": "adam"},
-                  "method": {"name": "adam" if method == "adam" else "dpco",
+        config = {"seed": seed, "training": {"optimizer": optimizer},
+                  "method": {"name": method if method in ("adam", "sgd") else "dpco",
                              "negative_weight": 0 if method == "filter" else -1},
                   "reference": {"name": "ema", "beta": .9}}
         logs = directory.parent.parent / "logs" / directory.name
@@ -222,6 +222,80 @@ class EvaluationPlotTests(unittest.TestCase):
                 self.assertEqual(ax.lines[0].get_ydata()[0], 62.5)
             finally:
                 plt.close(fig)
+
+    def test_sgd_three_seed_cli_statistics_labels_and_optimizer_guards(self):
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            args, runs = [], []
+            for method in ("sgd", "flip", "filter"):
+                for i, seed in enumerate((42, 43, 44)):
+                    name = (f"mnist_noisy_mnist_cnn_sgd_{seed}_0.001_run" if method == "sgd" else
+                            f"mnist_noisy_mnist_cnn_dpco_ema_b0.9_w{'-1' if method == 'flip' else '0'}_{seed}_0.001_run")
+                    path = root / "results/files" / name
+                    fixture(path, offset_s=i * 30, seed=seed, method=method, optimizer="sgd")
+                    runs.append(plots.load_evaluation_run(method, path, optimizer="sgd"))
+                    args.extend([f"--{method}-dir", str(path)])
+            originals = {p: p.read_bytes() for p in root.rglob("*.csv")}
+            aggregate = plots.evaluation_aggregates(runs)
+            baseline = [r for r in aggregate['step'] if r['method'] == 'sgd']
+            self.assertEqual(baseline[0]['run_count'], 3)
+            self.assertAlmostEqual(baseline[0]['raw_clean_ce_mean'], 8.5)
+            self.assertAlmostEqual(baseline[0]['raw_clean_ce_std'], .5)
+            self.assertEqual(plots.evaluation_notes(runs), [])
+            fig = plots.make_evaluation_figure(runs, aggregate, 'step', 'clean_ce', 'Step', 'CE', show_raw=False, plt=plt)
+            try:
+                labels = [t.get_text() for t in fig.axes[0].get_legend().get_texts()]
+                self.assertEqual(labels, ['SGD (n=3)', 'DPCO Flip (n=3)', 'DPCO Filter (n=3)'])
+                self.assertEqual(fig.axes[0].lines[0].get_color(), '#1f77b4')
+            finally:
+                plt.close(fig)
+            args += ['--plot-set', 'clean-original', '--output-name', 'sgd_groups', '--formats', 'png', '--dpi', '70']
+            with patch.object(plots, 'ROOT', root):
+                output = plots.main(args)
+                manifest = json.loads((output / 'plot_manifest.json').read_text())
+                self.assertEqual(manifest['optimizer'], 'sgd')
+                self.assertEqual(set(manifest['styles']), {'sgd', 'flip', 'filter'})
+                self.assertEqual({r['seed'] for r in manifest['runs']}, {42, 43, 44})
+                self.assertEqual({r['seed_source'] for r in manifest['runs']}, {'metadata'})
+                self.assertEqual(len(list(output.glob('*.png'))), 4)
+                self.assertNotIn('adam', manifest['statistics']['time_support_minutes'])
+                with (output / 'evaluation_step_curves.csv').open() as handle:
+                    self.assertEqual({r['method'] for r in csv.DictReader(handle)}, {'sgd', 'flip', 'filter'})
+                # Accidentally providing two baselines is rejected by argparse.
+                with self.assertRaises(SystemExit), patch('sys.stderr', StringIO()):
+                    plots.main(args + ['--adam-dir', str(runs[0].directory)])
+                # A single DPCO/Adam run cannot slip into an SGD comparison.
+                path = root / 'results/logs' / runs[3].directory.name / 'metadata.json'
+                metadata = json.loads(path.read_text())
+                metadata['config']['training']['optimizer'] = 'adam'
+                path.write_text(json.dumps(metadata))
+                with self.assertRaises(SystemExit), patch('sys.stderr', StringIO()) as error:
+                    plots.main(args + ['--output-name', 'mixed_optimizers'])
+                self.assertIn('optimizer adam does not match requested sgd', error.getvalue())
+                self.assertFalse((root / 'results/figures/mixed_optimizers').exists())
+            self.assertTrue(all(p.read_bytes() == data for p, data in originals.items()))
+            # Duplicate seeds remain invalid for the new baseline.
+            runs[1].seed = runs[0].seed
+            with self.assertRaisesRegex(ValueError, 'duplicate training seed'):
+                plots.evaluation_aggregates(runs)
+
+    def test_historical_sgd_names_without_metadata_and_wrong_baseline(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cases = [('sgd', 'mnist_noisy_mnist_cnn_sgd_42_0.001_run', 42),
+                     ('flip', 'mnist_noisy_mnist_cnn_dpco_ema_b0.9_w-1_43_0.001_run', 43),
+                     ('filter', 'mnist_noisy_mnist_cnn_dpco_ema_b0.9_w0_44_0.001_run', 44)]
+            for method, name, seed in cases:
+                path = root / name
+                fixture(path)
+                run = plots.load_evaluation_run(method, path, optimizer='sgd')
+                self.assertEqual(run.seed, seed)
+                self.assertEqual(run.seed_source, 'directory_name_unverified')
+            with self.assertRaisesRegex(ValueError, 'directory optimizer sgd'):
+                plots.load_evaluation_run('adam', root / cases[0][1])
 
 
 if __name__ == "__main__":

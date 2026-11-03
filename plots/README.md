@@ -4,6 +4,8 @@
 
 默认 `--plot-set training` 沿用原有五图模式，显式选择三个不同目录，每个目录需要完整、已刷盘的 `train_steps.csv` 和 `timing.csv`。新增 `--plot-set clean-original` 模式读取固定训练分组评价，每个方法可重复传入多个seed目录，详见下文。两种模式均支持绝对路径、相对DPCO根目录的路径，或 `results/files/` 下的单个run目录名；不自动寻找“最新”或“最好”的运行。若有对应的 `results/logs/<run_name>/metadata.json`，会核验方法标签，并报告训练设置差异；仅复制所需CSV也可以绘图，但会注明无法核对元信息。
 
+基线二选一：Adam用 `--adam-dir`，SGD用 `--sgd-dir`，两者互斥，支持的路径规则相同；Flip/Filter仍用 `--flip-dir` 和 `--filter-dir`。每次比较使用同一种优化器，metadata中的DPCO优化器必须与所选基线一致。SGD图例为蓝实线SGD，Flip红实线、Filter橙虚线，导出CSV和manifest也记作sgd，不会标为Adam。SGD的clean-original模式同样支持三seed等重复运行、均值与样本标准差；目录保留原始命名时，可识别 `sgd_<seed>` 及不含优化器标记的 `dpco_ema_b..._w..._<seed>`，有metadata时优先核对其中seed。
+
 在服务器DPCO根目录执行下面整段。替换三处 `YOUR_*_RUN` 为实际目录名。安装绘图依赖和绘图均在同一个nohup任务内顺序运行，日志/PID位于results/logs。
 
 ```bash

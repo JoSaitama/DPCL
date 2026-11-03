@@ -1,4 +1,4 @@
-"""Compare explicit Adam/Flip/Filter runs offline, including repeated-seed group evaluations."""
+"""Compare Adam or SGD with DPCO Flip/Filter offline, including repeated-seed evaluations."""
 
 import argparse
 from bisect import bisect_right
@@ -21,6 +21,27 @@ STYLES = {
     "flip": {"label": "DPCO Flip", "color": "#d62728", "linestyle": "-"},
     "filter": {"label": "DPCO Filter", "color": "#ff7f0e", "linestyle": "--"},
 }
+BASELINES = {"adam", "sgd"}
+
+
+def comparison_styles(methods):
+    baselines = BASELINES.intersection(methods)
+    if len(baselines) > 1:
+        raise ValueError("Compare one optimizer at a time; do not mix Adam and SGD baselines")
+    baseline = next(iter(baselines), "adam")
+    return {baseline: {**STYLES["adam"], "label": "SGD" if baseline == "sgd" else "Adam"},
+            "flip": STYLES["flip"], "filter": STYLES["filter"]}
+
+
+def directory_identity(directory):
+    """Keep historical DPCO names without an explicit optimizer token usable."""
+    match = re.search(r"(?:^|_)(adam|sgd)_(\d+)(?:_|$)", directory.name)
+    if match:
+        return match[1], int(match[2])
+    match = re.search(r"_dpco_ema_b[^_]+_w[^_]+_(\d+)(?:_|$)", directory.name)
+    return None, int(match[1]) if match else None
+
+
 FIGURES = (
     ("train_ce_vs_step", "step", "ce", "Training step", "Train CE"),
     ("train_accuracy_vs_step", "step", "accuracy", "Training step", "Train accuracy (%)"),
@@ -86,7 +107,7 @@ def resolve_input(value):
     return path.resolve()
 
 
-def load_run(method, directory):
+def load_run(method, directory, *, optimizer=None):
     directory = Path(directory).resolve()
     sources = {}
     train = []
@@ -121,12 +142,16 @@ def load_run(method, directory):
         previous_step, previous_wall = end, wall
     if not windows or previous_step != len(train):
         raise ValueError(f"{directory}: train_window coverage must match all training rows; use fully flushed CSVs")
-    metadata = load_metadata(method, directory, sources)
+    metadata = load_metadata(method, directory, sources, optimizer=optimizer)
     return Run(method, directory, train, windows, sources, metadata)
 
 
-def load_metadata(method, directory, sources):
+def load_metadata(method, directory, sources, *, optimizer=None):
     metadata = None
+    expected_optimizer = optimizer or (method if method in BASELINES else None)
+    named_optimizer, _ = directory_identity(directory)
+    if named_optimizer is not None and expected_optimizer is not None and named_optimizer != expected_optimizer:
+        raise ValueError(f"{directory}: directory optimizer {named_optimizer} does not match requested {expected_optimizer}")
     # Metadata is optional for portable CSV exports, but validates labels when available.
     if directory.parent.name == "files":
         path = directory.parent.parent / "logs" / directory.name / "metadata.json"
@@ -135,9 +160,12 @@ def load_metadata(method, directory, sources):
             sources[path] = hashlib.sha256(data).hexdigest()
             metadata = json.loads(data)
             config = metadata["config"]
-            valid = config["training"].get("optimizer", "sgd") == "adam"
-            if method == "adam":
-                valid = valid and config["method"]["name"] == "adam"
+            actual_optimizer = config["training"].get("optimizer", "sgd")
+            if expected_optimizer is not None and actual_optimizer != expected_optimizer:
+                raise ValueError(f"{path}: optimizer {actual_optimizer} does not match requested {expected_optimizer}")
+            valid = actual_optimizer in BASELINES
+            if method in BASELINES:
+                valid = valid and actual_optimizer == method and config["method"]["name"] == method
             else:
                 valid = (valid and config["method"]["name"] == "dpco"
                          and config["reference"]["name"] == "ema"
@@ -147,7 +175,7 @@ def load_metadata(method, directory, sources):
     return metadata
 
 
-def load_evaluation_run(method, directory, smooth_window=1):
+def load_evaluation_run(method, directory, smooth_window=1, *, optimizer=None):
     """Use fixed train groups, with primary-evaluation completion timestamps."""
     if smooth_window < 1:
         raise ValueError("eval-smooth-window must be positive")
@@ -202,10 +230,9 @@ def load_evaluation_run(method, directory, smooth_window=1):
         prefix = points[max(0, i + 1 - smooth_window):i + 1]
         for metric in ("clean_ce", "original_accuracy_percent"):
             point["smooth_" + metric] = mean(row["raw_" + metric] for row in prefix)
-    metadata = load_metadata(method, directory, sources)
-    name_seed = re.search(r"(?:^|_)adam_(\d+)(?:_|$)", directory.name)
-    seed = int(name_seed[1]) if name_seed else None
-    seed_source = "directory_name_unverified" if name_seed else None
+    metadata = load_metadata(method, directory, sources, optimizer=optimizer)
+    _, seed = directory_identity(directory)
+    seed_source = "directory_name_unverified" if seed is not None else None
     if metadata is not None and "seed" in metadata["config"]:
         config_seed = number(metadata["config"], "seed", f"{directory}: metadata config", integer=True)
         if seed is not None and seed != config_seed:
@@ -230,7 +257,7 @@ def interpolate(points, xkey, x, value_key):
 def evaluation_aggregates(runs):
     """Equal weight per run; step nodes exact, wall nodes aligned within overlap."""
     aggregated = {"step": [], "time": []}
-    for method in STYLES:
+    for method in comparison_styles({run.method for run in runs}):
         selected = [run for run in runs if run.method == method]
         grids = [tuple((p["step"], p["samples_seen"]) for p in run.points) for run in selected]
         if len(set(grids)) != 1:
@@ -263,14 +290,15 @@ def evaluation_aggregates(runs):
 
 def evaluation_notes(runs):
     notes = metadata_notes(runs, include_seed=False)
-    counts = {method: sum(run.method == method for run in runs) for method in STYLES}
+    styles = comparison_styles({run.method for run in runs})
+    counts = {method: sum(run.method == method for run in runs) for method in styles}
     if len(set(counts.values())) != 1:
         notes.append(f"Methods have different repeat counts: {counts}.")
-    for method in STYLES:
+    for method in styles:
         selected = [run for run in runs if run.method == method]
         if any(run.seed_source != "metadata" for run in selected):
             notes.append(f"{method}: training-seed identity is not fully authenticated by metadata; directory-derived seeds are unverified.")
-    known_sets = [{run.seed for run in runs if run.method == method and run.seed is not None} for method in STYLES]
+    known_sets = [{run.seed for run in runs if run.method == method and run.seed is not None} for method in styles]
     if any(seeds != known_sets[0] for seeds in known_sets[1:]):
         notes.append("Methods have different identified seed sets; no paired-seed inference is made.")
     if len({tuple((p["step"], p["samples_seen"]) for p in run.points) for run in runs}) > 1:
@@ -283,7 +311,7 @@ def make_evaluation_figure(runs, aggregated, kind, metric, xlabel, ylabel, *, sh
     fig.subplots_adjust(left=.18, right=.97, bottom=.19, top=.97)
     ax.set_box_aspect(.9)
     xkey = "step" if kind == "step" else "wall_minutes"
-    for method, style in STYLES.items():
+    for method, style in comparison_styles({run.method for run in runs}).items():
         if show_raw:
             for run in runs:
                 if run.method == method:
@@ -373,7 +401,7 @@ def metadata_notes(runs, *, include_seed=True):
         if len({json.dumps(config.get(key), sort_keys=True) for config in available}) > 1:
             notes.append(f"Metadata differs in {key}; this is not a matched comparison on that setting.")
     references = [run.metadata["config"]["reference"] for run in runs
-                  if run.method != "adam" and run.metadata is not None]
+                  if run.method not in BASELINES and run.metadata is not None]
     if len({json.dumps(value, sort_keys=True) for value in references}) > 1:
         notes.append("Flip and Filter use different reference configurations.")
     fingerprints = [run.metadata.get("experiment", {}).get("data_fingerprint") for run in runs
@@ -387,6 +415,7 @@ def make_figure(data, kind, metric, xlabel, ylabel, *, time_axis, show_raw, plt)
     fig, ax = plt.subplots(figsize=(5, 4.5))
     fig.subplots_adjust(left=.17, right=.97, bottom=.19, top=.97)
     ax.set_box_aspect(.9)
+    styles = comparison_styles(set(data))
     for method, (step_rows, timing_rows) in data.items():
         rows = step_rows if kind == "step" else timing_rows
         xkey = ("wall_minutes" if time_axis == "wall" else "active_minutes") if kind == "time" else "step"
@@ -394,7 +423,7 @@ def make_figure(data, kind, metric, xlabel, ylabel, *, time_axis, show_raw, plt)
         x = [row[xkey] for row in rows]
         raw = [row["raw_" + suffix] for row in rows]
         smooth = [row["smooth_" + suffix] for row in rows]
-        style = STYLES[method]
+        style = styles[method]
         if show_raw and raw != smooth:
             ax.plot(x, raw, color=style["color"], linestyle=style["linestyle"], alpha=.18, linewidth=.6)
         ax.plot(x, smooth, **style, linewidth=1.5)
@@ -419,7 +448,11 @@ def write_csv(path, rows):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    for method in STYLES:
+    baseline_group = parser.add_mutually_exclusive_group(required=True)
+    for method in ("adam", "sgd"):
+        baseline_group.add_argument(f"--{method}-dir", action="append",
+                                    help=f"Explicit {method.upper()} baseline directory; repeat for each seed in clean-original mode")
+    for method in ("flip", "filter"):
         parser.add_argument(f"--{method}-dir", required=True, action="append",
                             help="Explicit run directory; repeat for each seed in clean-original mode. Absolute, repository-relative, or a run name beneath results/files.")
     parser.add_argument("--plot-set", choices=("training", "clean-original"), default="training",
@@ -436,12 +469,14 @@ def main(argv=None):
     parser.add_argument("--output-name", default=None,
                         help="New directory name beneath results/figures; existing output is never overwritten")
     args = parser.parse_args(argv)
+    optimizer = "sgd" if args.sgd_dir is not None else "adam"
+    styles = comparison_styles({optimizer, "flip", "filter"})
     if args.smooth_window < 1 or args.eval_smooth_window < 1 or args.dpi < 1:
         parser.error("smooth-window, eval-smooth-window and dpi must be positive")
     evaluation_mode = args.plot_set == "clean-original"
     if evaluation_mode and args.time_axis != "wall":
         parser.error("clean-original plots require --time-axis wall; evaluation.csv records wall time")
-    if not evaluation_mode and any(len(getattr(args, method + "_dir")) != 1 for method in STYLES):
+    if not evaluation_mode and any(len(getattr(args, method + "_dir")) != 1 for method in styles):
         parser.error("Repeated directories require --plot-set clean-original; training mode keeps one run per method")
     prefix = "dpco_clean_original_" if evaluation_mode else "dpco_training_"
     name = args.output_name or prefix + datetime.now().astimezone().strftime("%Y%m%d_%H%M%S_%f")
@@ -451,19 +486,20 @@ def main(argv=None):
     if output.exists():
         parser.error(f"Output already exists: {output}; choose a new --output-name")
     try:
-        inputs = [(method, resolve_input(value)) for method in STYLES for value in getattr(args, method + "_dir")]
+        inputs = [(method, resolve_input(value)) for method in styles for value in getattr(args, method + "_dir")]
         directories = [directory for _, directory in inputs]
         if len(set(directories)) != len(directories):
             raise ValueError("Every input run directory must be distinct; duplicate runs would bias repeat statistics")
         if any(directory == output.resolve() or directory in output.resolve().parents for directory in directories):
             raise ValueError("Output must not be inside an input run directory")
         if evaluation_mode:
-            runs = [load_evaluation_run(method, directory, args.eval_smooth_window) for method, directory in inputs]
+            runs = [load_evaluation_run(method, directory, args.eval_smooth_window, optimizer=optimizer)
+                    for method, directory in inputs]
             if len({(run.points[0]["clean_samples"], run.points[0]["corrupted_samples"]) for run in runs}) != 1:
                 raise ValueError("Compared runs must use the same fixed clean/corrupted group sizes")
             data = evaluation_aggregates(runs)
         else:
-            runs = [load_run(method, directory) for method, directory in inputs]
+            runs = [load_run(method, directory, optimizer=optimizer) for method, directory in inputs]
             data = {run.method: curves(run, args.smooth_window) for run in runs}
     except (OSError, ValueError, KeyError, UnicodeError) as error:
         parser.error(str(error))
@@ -514,7 +550,7 @@ def main(argv=None):
     manifest = {"format": "dpco-group-evaluation-plots-v1" if evaluation_mode else "dpco-training-plots-v1", "created_at": datetime.now().astimezone().isoformat(),
         "script_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "python": sys.version, "matplotlib": matplotlib.__version__,
-        "arguments": vars(args), "styles": STYLES, "figure_inches": [5, 4.5], "axes_height_width_ratio": .9,
+        "arguments": vars(args), "optimizer": optimizer, "styles": styles, "figure_inches": [5, 4.5], "axes_height_width_ratio": .9,
         "smoothing": "Step plots: sample-weighted trailing W updates with a growing prefix. Time/cost: whole trailing train_window records covering at least W updates (or the available prefix). W=1 leaves each timing window intact.",
         "timing": {"axis": args.time_axis,
             "wall": "Completed train_window endpoints; training-loop elapsed time includes initial evaluation, JIT and prior evaluation/checkpoint overhead, excludes pre-loop data preparation/model initialization.",
@@ -535,7 +571,7 @@ def main(argv=None):
                 "step_alignment": "Exact matching recorded step and samples_seen nodes within each method; no step interpolation",
                 "time_alignment": "Per method: piecewise-linear interpolation on the union of recorded evaluation completion times restricted to the overlap of all repeats, including overlap endpoints; no extrapolation or duration normalization. Interpolated values are display alignment, not additional evaluations.",
                 "time_support_minutes": {method: {"start": min(r["wall_minutes"] for r in data["time"] if r["method"] == method),
-                                                  "end": max(r["wall_minutes"] for r in data["time"] if r["method"] == method)} for method in STYLES}},
+                                                  "end": max(r["wall_minutes"] for r in data["time"] if r["method"] == method)} for method in styles}},
             "timing": {"axis": "wall", "source": "evaluation.csv elapsed_wall_s/60 joined to group_evaluation.csv by exact step and samples_seen",
                 "wall": "Metric availability after primary and group evaluations; includes in-loop training/JIT/evaluation/checkpoint overhead, excludes pre-loop data preparation and model initialization. Step-0 timestamps are retained.",
                 "raw_curves": "Faint individual runs retain their own complete measured time ranges; aggregate bands use common coverage per method."},
