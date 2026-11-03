@@ -268,14 +268,26 @@ def parser():
     p.add_argument("--tradeoff-trajectories", action="store_true", help="Add process-beta trajectories with time arrows")
     p.add_argument("--smooth-window", type=int, default=100, help="Edited-rate trailing window in training updates")
     p.add_argument("--eval-smooth-window", type=int, default=1, help="Evaluation trailing window in recorded nodes (1=raw)")
-    p.add_argument("--raw", action=argparse.BooleanOptionalAction, default=True, help="Show faint raw curves when smoothing")
+    p.add_argument("--raw", action=argparse.BooleanOptionalAction, default=False, help="Opt in to faint raw curves under smoothing (not an uncertainty band)")
     p.add_argument("--edit-stride", type=int, default=1, help="Display/export every Nth edit point AFTER smoothing; retain endpoints")
     p.add_argument("--mark-steps", nargs="*", type=int, default=[7800], help="Vertical budget markers; e.g. 7800 is 10%% of 78000, not initialization")
     p.add_argument("--figure-width", type=float, default=5, help="Inches; height is always 0.8 times width")
     p.add_argument("--dpi", type=int, default=220)
     p.add_argument("--formats", nargs="+", choices=("png", "pdf"), default=["png", "pdf"])
-    p.add_argument("--output-name", help="New subdirectory under results/figure; existing outputs are never overwritten")
+    p.add_argument("--output-name", help="New subdirectory under results/figures; existing outputs are never overwritten")
     return p
+
+
+def beta_colors(betas):
+    """Shared rank-based shades: higher reference beta is darker in each family."""
+    import matplotlib
+    from matplotlib.colors import to_hex
+
+    ordered = sorted(betas)
+    levels = {beta: .5 + .4 * i / (len(ordered) - 1) if len(ordered) > 1 else .7
+              for i, beta in enumerate(ordered)}
+    return {method: {beta: to_hex(matplotlib.colormaps[cmap](level)) for beta, level in levels.items()}
+            for method, cmap in (("flip", "Reds"), ("filter", "Oranges"))}
 
 
 def render(cohorts, betas, endpoint, args, output):
@@ -285,22 +297,22 @@ def render(cohorts, betas, endpoint, args, output):
     from matplotlib.lines import Line2D
 
     scale = args.figure_width / 5
-    plt.rcParams.update({"font.family": "DejaVu Sans", "font.size": 7 * scale,
-                         "pdf.fonttype": 42, "axes.titlesize": 8 * scale,
-                         "axes.labelsize": 7 * scale, "legend.fontsize": 6.5 * scale})
+    plt.rcParams.update({"font.family": "DejaVu Sans", "font.size": 10 * scale,
+                         "pdf.fonttype": 42, "axes.titlesize": 10 * scale,
+                         "axes.labelsize": 10 * scale, "legend.fontsize": 8.5 * scale})
     handles = [Line2D([], [], color=color, ls=ls, label=label) for label, color, ls in STYLES.values()]
     markers = {beta: MARKERS[i % len(MARKERS)] for i, beta in enumerate(betas)}
+    shades = beta_colors(betas)
     files = []
 
-    def canvas(nrows):
-        fig, axes = plt.subplots(nrows, len(cohorts), squeeze=False,
-                                 figsize=(args.figure_width, .8 * args.figure_width))
-        fig.subplots_adjust(left=.14, right=.97, bottom=.14, top=.83,
-                            wspace=.45, hspace=.60)
-        return fig, axes
+    def canvas():
+        # Each exported file contains exactly one axes, never a comparison grid.
+        fig, ax = plt.subplots(figsize=(args.figure_width, .8 * args.figure_width))
+        fig.subplots_adjust(left=.17, right=.97, bottom=.17, top=.86)
+        return fig, ax
 
     def finish(fig, name, legend=handles):
-        fig.legend(handles=legend, loc="upper center", bbox_to_anchor=(.5, .99),
+        fig.legend(handles=legend, loc="upper center", bbox_to_anchor=(.55, 1.),
                    ncol=min(3, len(legend)), frameon=False)
         for fmt in dict.fromkeys(args.formats):
             path = output / f"{name}.{fmt}"
@@ -319,7 +331,7 @@ def render(cohorts, betas, endpoint, args, output):
                 if 0 < step <= ax.get_xlim()[1]:
                     ax.axvline(step, color=".5", lw=.6, alpha=.5, zorder=0)
                     ax.text(step, .98, f"{step:,}", transform=ax.get_xaxis_transform(),
-                            rotation=90, ha="right", va="top", color=".45", fontsize=5 * scale)
+                            rotation=90, ha="right", va="top", color=".45", fontsize=7 * scale)
 
     def curve(ax, run, metric):
         _, color, ls = STYLES[run.method]
@@ -329,44 +341,43 @@ def render(cohorts, betas, endpoint, args, output):
             ax.plot(x, raw, color=color, ls=ls, alpha=.18, lw=.7)
         ax.plot(x, list(trailing(raw, args.eval_smooth_window)), color=color, ls=ls, lw=1.3)
 
-    if "noise-accuracy" in args.plots:
-        fig, axes = canvas(2)
-        for col, cohort in enumerate(cohorts):
-            noise = cohort["adam", None].noise_percent
-            for row, metric in enumerate(("original_accuracy", "noisy_accuracy")):
-                ax = axes[row, col]
+    for cohort in cohorts:
+        noise = cohort["adam", None].noise_percent
+        noise_name = f"noise{noise:g}".replace(".", "p")
+        beta_name = f"beta{args.process_beta:g}".replace(".", "p")
+        if "noise-accuracy" in args.plots:
+            for metric, name, ylabel in (
+                ("original_accuracy", "corrupted_original_accuracy_vs_step", "Corrupted: original acc (%)"),
+                ("noisy_accuracy", "corrupted_noisy_accuracy_vs_step", "Corrupted: noisy acc (%)"),
+            ):
+                fig, ax = canvas()
                 for method in STYLES:
                     curve(ax, cohort[method, None if method == "adam" else args.process_beta], metric)
-                decorate(ax, f"{noise:g}% noise | β={args.process_beta:g}", "Training step",
-                         "Corrupted: original acc (%)" if row == 0 else "Corrupted: noisy acc (%)")
+                decorate(ax, f"{noise:g}% noise | β={args.process_beta:g}", "Training step", ylabel)
                 ax.set_ylim(0, 102)
-        finish(fig, "corrupted_accuracy_vs_step")
+                finish(fig, f"{noise_name}_{name}_{beta_name}")
 
-    if "test-accuracy" in args.plots:
-        fig, axes = canvas(1)
-        for col, cohort in enumerate(cohorts):
-            ax = axes[0, col]
+        if "test-accuracy" in args.plots:
+            fig, ax = canvas()
             for method in STYLES:
                 curve(ax, cohort[method, None if method == "adam" else args.process_beta], "test_accuracy")
-            decorate(ax, f"{cohort['adam', None].noise_percent:g}% noise | β={args.process_beta:g}",
+            decorate(ax, f"{noise:g}% noise | β={args.process_beta:g}",
                      "Training step", "Clean test accuracy (%)")
             ax.set_ylim(0, 102)
-        finish(fig, "clean_test_accuracy_vs_step")
+            finish(fig, f"{noise_name}_clean_test_accuracy_vs_step_{beta_name}")
 
-    if "tradeoff" in args.plots:
-        fig, axes = canvas(1)
-        for col, cohort in enumerate(cohorts):
-            ax = axes[0, col]
+        if "tradeoff" in args.plots:
+            fig, ax = canvas()
             for run in cohort.values():
                 point = next(p for p in run.points if p["step"] == endpoint)
-                _, color, ls = STYLES[run.method]
+                _, base_color, ls = STYLES[run.method]
+                color = base_color if run.method == "adam" else shades[run.method][run.beta]
                 marker = "*" if run.method == "adam" else markers[run.beta]
                 ax.scatter(point["clean_accuracy"], point["original_accuracy"], color=color,
-                           marker=marker, s=23 * scale ** 2, zorder=4)
+                           marker=marker, s=35 * scale ** 2, zorder=4)
                 index = betas.index(run.beta) if run.beta is not None else -1
                 label = "Adam" if run.method == "adam" else f"β={run.beta:g}"
-                # Nearly identical Filter/Adam points must stay at their true
-                # coordinates. Move text into separate label lanes, not data.
+                # Separate annotation lanes preserve genuinely coincident points.
                 clustered = point["clean_accuracy"] > 97 and point["original_accuracy"] < 5
                 if clustered and run.method in ("filter", "adam"):
                     text_position = (.42, .07 + .065 * index) if run.method == "filter" else (.92, .015)
@@ -376,7 +387,7 @@ def render(cohorts, betas, endpoint, args, output):
                     text_coordinates = "offset points"
                 ax.annotate(label, (point["clean_accuracy"], point["original_accuracy"]),
                             xytext=text_position, textcoords=text_coordinates,
-                            ha="right", color=color, fontsize=6 * scale,
+                            ha="right", color=color, fontsize=8 * scale,
                             arrowprops=dict(arrowstyle="-", color=color, lw=.4))
                 if args.tradeoff_trajectories and (run.method == "adam" or run.beta == args.process_beta):
                     trajectory = [p for p in run.points if p["step"] <= endpoint]
@@ -388,19 +399,20 @@ def render(cohorts, betas, endpoint, args, output):
                             ax.annotate("", xy=(b["clean_accuracy"], b["original_accuracy"]),
                                         xytext=(a["clean_accuracy"], a["original_accuracy"]),
                                         arrowprops=dict(arrowstyle="->", color=color, lw=.8))
-            decorate(ax, f"{cohort['adam', None].noise_percent:g}% noise | step {endpoint:,}",
-                     "Clean training accuracy (%)", "Corrupted: original acc (%)", step_axis=False)
+            title = f"{noise:g}% noise | step {endpoint:,}"
+            if args.tradeoff_trajectories:
+                title += f" | paths β={args.process_beta:g}"
+            decorate(ax, title, "Clean training accuracy (%)", "Corrupted: original acc (%)", step_axis=False)
             ax.set_xlim(-3, 105)
             ax.set_ylim(-6, 106)
-        finish(fig, "clean_vs_corrupted_original_accuracy")
+            finish(fig, f"{noise_name}_clean_vs_corrupted_original_accuracy_step{endpoint}")
 
-    if "edit-rate" in args.plots:
-        fig, axes = canvas(2)
-        for col, cohort in enumerate(cohorts):
-            for row, method in enumerate(("flip", "filter")):
-                ax = axes[row, col]
-                label, color, ls = STYLES[method]
+        if "edit-rate" in args.plots:
+            for method in ("flip", "filter"):
+                fig, ax = canvas()
+                label, _, ls = STYLES[method]
                 for index, beta in enumerate(betas):
+                    color = shades[method][beta]
                     series = list(edit_series(cohort[method, beta].edits, args.smooth_window))
                     selected = [p for i, p in enumerate(series) if i % args.edit_stride == 0 or i == len(series) - 1]
                     x, raw, smoothed = zip(*selected)
@@ -409,11 +421,11 @@ def render(cohorts, betas, endpoint, args, output):
                     ax.plot(x, smoothed, color=color, ls=ls, lw=1., marker=markers[beta],
                             markevery=(index * max(1, len(x) // (8 * len(betas))), max(1, len(x) // 8)),
                             ms=3.8 * scale, markerfacecolor="white", markeredgewidth=.7)
-                decorate(ax, f"{cohort['adam', None].noise_percent:g}% noise | {label}",
-                         "Training step", "Edited contributions (%)")
+                decorate(ax, f"{noise:g}% noise | {label}", "Training step", "Edited contributions (%)")
                 ax.set_ylim(0, 102)
-        beta_handles = [Line2D([], [], color=".3", ls="None", marker=markers[b], label=f"β={b:g}") for b in betas]
-        finish(fig, "edited_fraction_vs_step", beta_handles)
+                beta_handles = [Line2D([], [], color=shades[method][b], ls=ls, marker=markers[b],
+                                       markerfacecolor="white", label=f"β={b:g}") for b in reversed(betas)]
+                finish(fig, f"{noise_name}_{method}_edited_fraction_vs_step", beta_handles)
     return files
 
 
@@ -427,7 +439,7 @@ def main(argv=None):
     name = args.output_name or f"noise_training_{datetime.now():%Y%m%d_%H%M%S_%f}"
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", name):
         p.error("output-name must be a simple directory name")
-    output = ROOT / "results/figure" / name
+    output = ROOT / "results/figures" / name
     if output.exists():
         p.error(f"Output already exists: {output}")
     try:
@@ -467,6 +479,7 @@ def main(argv=None):
         manifest = dict(status="complete", script_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
                         arguments=vars(args), beta_set=betas, endpoint_step=endpoint,
                         figure_inches=[args.figure_width, .8 * args.figure_width], figures=files,
+                        layout="one axes per independent figure", beta_colors=beta_colors(betas),
                         seed=runs[0].seed, sources=[dict(path=str(path), sha256=sha) for path, sha in sources.items()],
                         runs=[dict(path=str(run.directory), method=run.method, beta=run.beta,
                                    noise_percent=run.noise_percent, counts=run.counts,
@@ -475,6 +488,8 @@ def main(argv=None):
                                        evaluation_smoothing="trailing arithmetic mean of recorded nodes, growing prefix",
                                        edit_smoothing="trailing sum(edited_count)/sum(valid_batch_size), growing prefix; before stride",
                                        endpoints="raw metrics at one common exact evaluation step; no beta averaging",
+                                       beta_shades="higher beta is darker; identical red/orange mapping in edit and tradeoff figures",
+                                       uncertainty="no uncertainty bands; --raw only overlays same-run unsmoothed fluctuations",
                                        test="val_top1 is the clean test metric for these CIFAR100N exports, not a tuning validation set",
                                        intervention="edited sample contributions, not detected label noise or gradient-displacement magnitude",
                                        provenance="missing metadata leaves full training settings/label-map equivalence unverified"))

@@ -162,9 +162,10 @@ class NoiseTrainingPlotTests(unittest.TestCase):
                     '--tradeoff-trajectories', '--mark-steps', '2'])
                 with self.assertRaises(SystemExit), patch('sys.stderr', StringIO()):
                     plots.main(inputs + ['--output-name', 'verified'])
-            self.assertEqual(output, root / 'results/figure/verified')
-            self.assertEqual(len(list(output.glob('*.png'))), 4)
-            self.assertEqual(len(list(output.glob('*.pdf'))), 4)
+            self.assertEqual(output, root / 'results/figures/verified')
+            self.assertEqual(len(list(output.glob('*.png'))), 12)
+            self.assertEqual(len(list(output.glob('*.pdf'))), 12)
+            self.assertFalse((root / 'results/figure').exists())
             for image_path in output.glob('*.png'):
                 with Image.open(image_path) as img:
                     self.assertEqual(img.size, (350, 280))
@@ -172,6 +173,8 @@ class NoiseTrainingPlotTests(unittest.TestCase):
             self.assertEqual(manifest['status'], 'complete')
             self.assertEqual(len(manifest['sources']), 40)
             self.assertEqual(manifest['figure_inches'], [5, 4.])
+            self.assertEqual(manifest['layout'], 'one axes per independent figure')
+            self.assertFalse(manifest['arguments']['raw'])
             with (output / 'endpoints.csv').open() as handle:
                 endpoints = list(csv.DictReader(handle))
             self.assertEqual(len(endpoints), 14)
@@ -183,18 +186,68 @@ class NoiseTrainingPlotTests(unittest.TestCase):
                 edits = list(csv.DictReader(handle))
             self.assertEqual([int(row['step']) for row in edits[:2]], [1, 4])
             self.assertEqual(float(edits[1]['smooth_edited_percent']), 43.75)
-            for _, axes in captured:
-                for ax in axes.flat:
-                    for line in ax.lines:
-                        if line.get_color() == '#ff7f0e':
-                            self.assertEqual(line.get_linestyle(), '--')
-                        elif line.get_color() in ('#1f77b4', '#d62728'):
-                            self.assertEqual(line.get_linestyle(), '-')
+            from matplotlib.colors import to_hex, to_rgb
+            from matplotlib.collections import PolyCollection
+            shades = plots.beta_colors([.95, .96, .98])
+            for method in ('flip', 'filter'):
+                # Darker shades have lower luminance as beta increases.
+                brightness = [sum(to_rgb(shades[method][b])) for b in (.95, .96, .98)]
+                self.assertGreater(brightness[0], brightness[1])
+                self.assertGreater(brightness[1], brightness[2])
+            for fig, ax in captured:
+                self.assertEqual(len(fig.axes), 1)
+                self.assertFalse(any(isinstance(c, PolyCollection) for c in ax.collections))
+                for line in ax.lines:
+                    color = line.get_color()
+                    if color in {'#ff7f0e', *shades['filter'].values()}:
+                        self.assertEqual(line.get_linestyle(), '--')
+                    elif color in {'#1f77b4', '#d62728', *shades['flip'].values()}:
+                        self.assertEqual(line.get_linestyle(), '-')
+                if ax.get_ylabel() == 'Edited contributions (%)':
+                    method = 'flip' if 'DPCO Flip' in ax.get_title() else 'filter'
+                    actual = {line.get_color() for line in ax.lines if line.get_color() != '.5'}
+                    self.assertEqual(actual, set(shades[method].values()))
+                    # Default smoothing draws only three curves, no raw overlay.
+                    self.assertEqual(len(ax.lines), 4)  # includes budget marker
+                    labels = [text.get_text() for text in fig.legends[0].get_texts()]
+                    self.assertEqual(labels, ['β=0.98', 'β=0.96', 'β=0.95'])
+                elif ax.get_xlabel() == 'Clean training accuracy (%)':
+                    actual = {to_hex(c.get_facecolor()[0]) for c in ax.collections}
+                    self.assertEqual(actual, {'#1f77b4', *shades['flip'].values(), *shades['filter'].values()})
             # The loader's source hashes still describe the untouched fixtures.
             import hashlib
             for run in runs:
                 for path, sha in run.sources.items():
                     self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(), sha)
+
+    def test_unsmoothed_edit_curves_have_no_faint_overlay(self):
+        try:
+            import matplotlib
+            matplotlib.use('Agg')
+            import matplotlib.pyplot as plt
+        except ImportError:
+            self.skipTest('matplotlib unavailable')
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            inputs, runs = all_fixtures(root)
+            cohorts, betas, endpoint = plots.comparison(runs, .96)
+            args = plots.parser().parse_args(inputs + ['--plots', 'edit-rate', '--smooth-window', '1',
+                                                      '--raw', '--formats', 'png', '--dpi', '60'])
+            captured = []
+            close = plt.close
+            def inspect(fig):
+                # Ignore pyplot's internal backend setup close('all').
+                if hasattr(fig, 'axes'):
+                    captured.append(fig)
+                close(fig)
+            with patch.object(plt, 'close', side_effect=inspect):
+                plots.render(cohorts, betas, endpoint, args, root)
+            self.assertEqual(len(captured), 4)
+            for fig in captured:
+                lines = [line for line in fig.axes[0].lines if line.get_color() != '.5']
+                self.assertEqual(len(lines), 3)
+                self.assertTrue(all(line.get_alpha() is None for line in lines))
+                self.assertEqual(len(fig.axes[0].collections), 0)
 
 
 if __name__ == '__main__':
