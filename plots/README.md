@@ -46,7 +46,7 @@ tail -n 30 "$log"
 
 另外保存 `step_curves.csv`、`timing_curves.csv` 和最后写入的 `plot_manifest.json`，记录曲线数据、平滑参数、输入文件SHA256、脚本SHA256、方法颜色/线型、计时说明、加权平均ms/step和设置差异。仅在全部绘图和输入未变检查成功后生成manifest；没有manifest的输出目录可能是不完整任务。绘图前后输入文件改变会报错，请对完成的run或一致的文件快照绘图。
 
-所有图画布为宽5英寸、高4英寸，绘图区高/宽固定0.8。PNG默认220 DPI，可用 `--dpi` 修改；`--formats png` 可只输出PNG。Adam为蓝实线、Flip为红实线、Filter为橙色虚线（`#ff7f0e`）。保留线性纵轴和原始异常值，不自动隐藏前期或裁剪高CE。
+所有图画布为宽5英寸、高4.5英寸，绘图区高/宽固定0.9。字体设置为 `text.usetex=False`、`font.family=serif`、`font.serif=["Nimbus Roman"]`、`mathtext.fontset=cm`；运行机器缺少Nimbus Roman时Matplotlib会提示并回退字体。PNG默认220 DPI，可用 `--dpi` 修改；`--formats png` 可只输出PNG。Adam为蓝实线、Flip为红实线、Filter为橙色虚线（`#ff7f0e`）。保留线性纵轴和原始异常值，不自动隐藏前期或裁剪高CE。
 
 ## 平滑与时间定义
 

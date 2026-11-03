@@ -172,6 +172,10 @@ class EvaluationPlotTests(unittest.TestCase):
             args += ["--plot-set", "clean-original", "--eval-smooth-window", "1", "--output-name", "groups", "--dpi", "70"]
             with patch.object(plots, "ROOT", root):
                 output = plots.main(args)
+                self.assertFalse(plt.rcParams['text.usetex'])
+                self.assertEqual(plt.rcParams['font.family'], ['serif'])
+                self.assertEqual(plt.rcParams['font.serif'], ['Nimbus Roman'])
+                self.assertEqual(plt.rcParams['mathtext.fontset'], 'cm')
                 self.assertEqual(len(list(output.glob("*.png"))), 4)
                 self.assertEqual(len(list(output.glob("*.pdf"))), 4)
                 manifest = json.loads((output / "plot_manifest.json").read_text())
@@ -180,7 +184,7 @@ class EvaluationPlotTests(unittest.TestCase):
                 self.assertEqual(manifest["comparison_notes"], [])
                 self.assertEqual(manifest["statistics"]["time_support_minutes"]["adam"], {"start": 2., "end": 5.})
                 for path in output.glob("*.png"):
-                    self.assertEqual(plt.imread(path).shape[:2], (280, 350))
+                    self.assertEqual(plt.imread(path).shape[:2], (315, 350))
                 for path in output.glob("*.pdf"):
                     self.assertTrue(path.read_bytes().startswith(b"%PDF"))
                 with (output / "evaluation_runs.csv").open() as handle:
@@ -213,7 +217,7 @@ class EvaluationPlotTests(unittest.TestCase):
                 self.assertEqual(len(ax.collections), 3)
                 self.assertEqual([line.get_color() for line in ax.lines], ["#1f77b4", "#d62728", "#ff7f0e"])
                 self.assertEqual([line.get_linestyle() for line in ax.lines], ["-", "-", "--"])
-                self.assertAlmostEqual(ax.get_window_extent().height / ax.get_window_extent().width, .8)
+                self.assertAlmostEqual(ax.get_window_extent().height / ax.get_window_extent().width, .9)
                 self.assertEqual(ax.lines[0].get_xdata()[-1], 5.)
                 self.assertEqual(ax.lines[0].get_ydata()[0], 62.5)
             finally:

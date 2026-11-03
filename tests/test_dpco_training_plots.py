@@ -134,6 +134,10 @@ class DPCOTrainingPlotTests(unittest.TestCase):
             args += ["--smooth-window", "2", "--output-name", "comparison", "--dpi", "70"]
             with patch.object(plots, "ROOT", root):
                 output = plots.main(args)
+                self.assertFalse(plt.rcParams['text.usetex'])
+                self.assertEqual(plt.rcParams['font.family'], ['serif'])
+                self.assertEqual(plt.rcParams['font.serif'], ['Nimbus Roman'])
+                self.assertEqual(plt.rcParams['mathtext.fontset'], 'cm')
                 self.assertEqual(output, root / "results/figures/comparison")
                 self.assertFalse((root / "results/files/plots").exists())
                 self.assertEqual(len(list(output.glob("*.png"))), 5)
@@ -142,7 +146,7 @@ class DPCOTrainingPlotTests(unittest.TestCase):
                 self.assertFalse(manifest["comparison_notes"])
                 self.assertAlmostEqual(manifest["runs"][0]["weighted_mean_ms_per_step"], 250.)
                 for path in output.glob("*.png"):
-                    self.assertEqual(plt.imread(path).shape[:2], (280, 350))
+                    self.assertEqual(plt.imread(path).shape[:2], (315, 350))
                 for path in output.glob("*.pdf"):
                     self.assertTrue(path.read_bytes().startswith(b"%PDF"))
                 with self.assertRaises(SystemExit), patch("sys.stderr", StringIO()):
@@ -164,7 +168,7 @@ class DPCOTrainingPlotTests(unittest.TestCase):
                 fig.canvas.draw()
                 ax = fig.axes[0]
                 box = ax.get_window_extent()
-                self.assertAlmostEqual(box.height / box.width, .8)
+                self.assertAlmostEqual(box.height / box.width, .9)
                 self.assertEqual([line.get_color() for line in ax.lines], ["#1f77b4", "#d62728", "#ff7f0e"])
                 self.assertEqual([line.get_linestyle() for line in ax.lines], ["-", "-", "--"])
                 self.assertAlmostEqual(ax.lines[0].get_xdata()[-1], 1.5 / 60)

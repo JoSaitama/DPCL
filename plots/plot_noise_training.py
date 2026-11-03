@@ -271,7 +271,7 @@ def parser():
     p.add_argument("--raw", action=argparse.BooleanOptionalAction, default=False, help="Opt in to faint raw curves under smoothing (not an uncertainty band)")
     p.add_argument("--edit-stride", type=int, default=1, help="Display/export every Nth edit point AFTER smoothing; retain endpoints")
     p.add_argument("--mark-steps", nargs="*", type=int, default=[7800], help="Vertical budget markers; e.g. 7800 is 10%% of 78000, not initialization")
-    p.add_argument("--figure-width", type=float, default=5, help="Inches; height is always 0.8 times width")
+    p.add_argument("--figure-width", type=float, default=5, help="Inches; height is always 0.9 times width")
     p.add_argument("--dpi", type=int, default=220)
     p.add_argument("--formats", nargs="+", choices=("png", "pdf"), default=["png", "pdf"])
     p.add_argument("--output-name", help="New subdirectory under results/figures; existing outputs are never overwritten")
@@ -297,7 +297,8 @@ def render(cohorts, betas, endpoint, args, output):
     from matplotlib.lines import Line2D
 
     scale = args.figure_width / 5
-    plt.rcParams.update({"font.family": "DejaVu Sans", "font.size": 10 * scale,
+    plt.rcParams.update({"text.usetex": False, "font.family": "serif",
+                         "font.serif": ["Nimbus Roman"], "mathtext.fontset": "cm", "font.size": 10 * scale,
                          "pdf.fonttype": 42, "axes.titlesize": 10 * scale,
                          "axes.labelsize": 10 * scale, "legend.fontsize": 8.5 * scale})
     handles = [Line2D([], [], color=color, ls=ls, label=label) for label, color, ls in STYLES.values()]
@@ -307,7 +308,7 @@ def render(cohorts, betas, endpoint, args, output):
 
     def canvas():
         # Each exported file contains exactly one axes, never a comparison grid.
-        fig, ax = plt.subplots(figsize=(args.figure_width, .8 * args.figure_width))
+        fig, ax = plt.subplots(figsize=(args.figure_width, .9 * args.figure_width))
         fig.subplots_adjust(left=.17, right=.97, bottom=.17, top=.86)
         return fig, ax
 
@@ -478,7 +479,7 @@ def main(argv=None):
                 raise ValueError(f"Input changed while plotting: {path}; output is incomplete")
         manifest = dict(status="complete", script_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
                         arguments=vars(args), beta_set=betas, endpoint_step=endpoint,
-                        figure_inches=[args.figure_width, .8 * args.figure_width], figures=files,
+                        figure_inches=[args.figure_width, .9 * args.figure_width], figures=files,
                         layout="one axes per independent figure", beta_colors=beta_colors(betas),
                         seed=runs[0].seed, sources=[dict(path=str(path), sha256=sha) for path, sha in sources.items()],
                         runs=[dict(path=str(run.directory), method=run.method, beta=run.beta,

@@ -279,9 +279,9 @@ def evaluation_notes(runs):
 
 
 def make_evaluation_figure(runs, aggregated, kind, metric, xlabel, ylabel, *, show_raw, plt):
-    fig, ax = plt.subplots(figsize=(5, 4))
+    fig, ax = plt.subplots(figsize=(5, 4.5))
     fig.subplots_adjust(left=.18, right=.97, bottom=.19, top=.97)
-    ax.set_box_aspect(.8)
+    ax.set_box_aspect(.9)
     xkey = "step" if kind == "step" else "wall_minutes"
     for method, style in STYLES.items():
         if show_raw:
@@ -384,9 +384,9 @@ def metadata_notes(runs, *, include_seed=True):
 
 
 def make_figure(data, kind, metric, xlabel, ylabel, *, time_axis, show_raw, plt):
-    fig, ax = plt.subplots(figsize=(5, 4))
+    fig, ax = plt.subplots(figsize=(5, 4.5))
     fig.subplots_adjust(left=.17, right=.97, bottom=.19, top=.97)
-    ax.set_box_aspect(.8)
+    ax.set_box_aspect(.9)
     for method, (step_rows, timing_rows) in data.items():
         rows = step_rows if kind == "step" else timing_rows
         xkey = ("wall_minutes" if time_axis == "wall" else "active_minutes") if kind == "time" else "step"
@@ -473,7 +473,8 @@ def main(argv=None):
         import matplotlib.pyplot as plt
     except ImportError:
         parser.error("Matplotlib is required; see plots/README.md for the nohup installation command (project extra: plot)")
-    plt.rcParams.update({"font.family": "DejaVu Sans", "font.size": 10,
+    plt.rcParams.update({"text.usetex": False, "font.family": "serif",
+                         "font.serif": ["Nimbus Roman"], "mathtext.fontset": "cm", "font.size": 10,
                          "pdf.fonttype": 42, "figure.facecolor": "white"})
     notes = evaluation_notes(runs) if evaluation_mode else comparison_notes(runs)
     for note in notes:
@@ -490,7 +491,7 @@ def main(argv=None):
         try:
             for extension in dict.fromkeys(args.formats):
                 target = output / (filename + "." + extension)
-                # Do not use bbox_inches='tight': exported canvas must remain 5 x 4 inches.
+                # Do not use bbox_inches='tight': exported canvas must remain 5 x 4.5 inches.
                 fig.savefig(target, dpi=args.dpi)
                 artifacts.append(target.name)
         finally:
@@ -513,7 +514,7 @@ def main(argv=None):
     manifest = {"format": "dpco-group-evaluation-plots-v1" if evaluation_mode else "dpco-training-plots-v1", "created_at": datetime.now().astimezone().isoformat(),
         "script_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "python": sys.version, "matplotlib": matplotlib.__version__,
-        "arguments": vars(args), "styles": STYLES, "figure_inches": [5, 4], "axes_height_width_ratio": .8,
+        "arguments": vars(args), "styles": STYLES, "figure_inches": [5, 4.5], "axes_height_width_ratio": .9,
         "smoothing": "Step plots: sample-weighted trailing W updates with a growing prefix. Time/cost: whole trailing train_window records covering at least W updates (or the available prefix). W=1 leaves each timing window intact.",
         "timing": {"axis": args.time_axis,
             "wall": "Completed train_window endpoints; training-loop elapsed time includes initial evaluation, JIT and prior evaluation/checkpoint overhead, excludes pre-loop data preparation/model initialization.",

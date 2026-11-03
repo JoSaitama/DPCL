@@ -168,12 +168,16 @@ class NoiseTrainingPlotTests(unittest.TestCase):
             self.assertFalse((root / 'results/figure').exists())
             for image_path in output.glob('*.png'):
                 with Image.open(image_path) as img:
-                    self.assertEqual(img.size, (350, 280))
+                    self.assertEqual(img.size, (350, 315))
             manifest = json.loads((output / 'plot_manifest.json').read_text())
             self.assertEqual(manifest['status'], 'complete')
             self.assertEqual(len(manifest['sources']), 40)
-            self.assertEqual(manifest['figure_inches'], [5, 4.])
+            self.assertEqual(manifest['figure_inches'], [5, 4.5])
             self.assertEqual(manifest['layout'], 'one axes per independent figure')
+            self.assertFalse(plt.rcParams['text.usetex'])
+            self.assertEqual(plt.rcParams['font.family'], ['serif'])
+            self.assertEqual(plt.rcParams['font.serif'], ['Nimbus Roman'])
+            self.assertEqual(plt.rcParams['mathtext.fontset'], 'cm')
             self.assertFalse(manifest['arguments']['raw'])
             with (output / 'endpoints.csv').open() as handle:
                 endpoints = list(csv.DictReader(handle))
