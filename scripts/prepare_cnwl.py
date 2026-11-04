@@ -37,7 +37,7 @@ def main():
         "cnwl_prepare_" + datetime.now().astimezone().strftime("%Y%m%d_%H%M%S_%f"))
     # Diagnostic artifacts follow the same results/files contract as training.
     if not report_dir.is_relative_to(ROOT / "results/files"):
-        parser.error("CNWL reports must be below DPCO/results/files/")
+        parser.error("CNWL reports must be below DPCL/results/files/")
     report_dir.mkdir(parents=True, exist_ok=True)
     try:
         if args.stage == "verify":

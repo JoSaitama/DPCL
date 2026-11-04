@@ -1,23 +1,23 @@
-# DPCO 训练与固定分组评价曲线
+# DPCL 训练与固定分组评价曲线
 
-`plot_dpco_training.py` 是独立的离线绘图入口，只需标准库和 Matplotlib，不导入 JAX、Flax、Optax 或 TPU。它不会修改训练CSV或checkpoint，也不会启动训练。原 `scripts/plot_training_results.py` 的历史绘图接口保持不变。
+`plot_dpcl_training.py` 是独立的离线绘图入口，只需标准库和 Matplotlib，不导入 JAX、Flax、Optax 或 TPU。它不会修改训练CSV或checkpoint，也不会启动训练。原 `scripts/plot_training_results.py` 的历史绘图接口保持不变。
 
-默认 `--plot-set training` 沿用原有五图模式，显式选择三个不同目录，每个目录需要完整、已刷盘的 `train_steps.csv` 和 `timing.csv`。新增 `--plot-set clean-original` 模式读取固定训练分组评价，每个方法可重复传入多个seed目录，详见下文。两种模式均支持绝对路径、相对DPCO根目录的路径，或 `results/files/` 下的单个run目录名；不自动寻找“最新”或“最好”的运行。若有对应的 `results/logs/<run_name>/metadata.json`，会核验方法标签，并报告训练设置差异；仅复制所需CSV也可以绘图，但会注明无法核对元信息。
+默认 `--plot-set training` 沿用原有五图模式，显式选择三个不同目录，每个目录需要完整、已刷盘的 `train_steps.csv` 和 `timing.csv`。新增 `--plot-set clean-original` 模式读取固定训练分组评价，每个方法可重复传入多个seed目录，详见下文。两种模式均支持绝对路径、相对DPCL根目录的路径，或 `results/files/` 下的单个run目录名；不自动寻找“最新”或“最好”的运行。若有对应的 `results/logs/<run_name>/metadata.json`，会核验方法标签，并报告训练设置差异；仅复制所需CSV也可以绘图，但会注明无法核对元信息。
 
-基线二选一：Adam用 `--adam-dir`，SGD用 `--sgd-dir`，两者互斥，支持的路径规则相同；Flip/Filter仍用 `--flip-dir` 和 `--filter-dir`。每次比较使用同一种优化器，metadata中的DPCO优化器必须与所选基线一致。SGD图例为蓝实线SGD，Flip红实线、Filter橙虚线，导出CSV和manifest也记作sgd，不会标为Adam。SGD的clean-original模式同样支持三seed等重复运行、均值与样本标准差；目录保留原始命名时，可识别 `sgd_<seed>` 及不含优化器标记的 `dpco_ema_b..._w..._<seed>`，有metadata时优先核对其中seed。
+基线二选一：Adam用 `--adam-dir`，SGD用 `--sgd-dir`，两者互斥，支持的路径规则相同；Flip/Filter仍用 `--flip-dir` 和 `--filter-dir`。每次比较使用同一种优化器，metadata中的DPCL优化器必须与所选基线一致。SGD图例为蓝实线SGD，Flip红实线、Filter橙虚线，导出CSV和manifest也记作sgd，不会标为Adam。SGD的clean-original模式同样支持三seed等重复运行、均值与样本标准差；目录保留原始命名时，可识别 `sgd_<seed>` 及不含优化器标记的 `dpcl_ema_b..._w..._<seed>`，有metadata时优先核对其中seed。
 
-在服务器DPCO根目录执行下面整段。替换三处 `YOUR_*_RUN` 为实际目录名。安装绘图依赖和绘图均在同一个nohup任务内顺序运行，日志/PID位于results/logs。
+在服务器DPCL根目录执行下面整段。替换三处 `YOUR_*_RUN` 为实际目录名。安装绘图依赖和绘图均在同一个nohup任务内顺序运行，日志/PID位于results/logs。
 
 ```bash
-cd /home/jason_chia925_gmail_com/Project_DPCO/DPCO
+cd /home/jason_chia925_gmail_com/Project_DPCO/DPCL
 mkdir -p results/logs
-export DPCO_PYTHON="$PWD/../.venv/bin/python"
-log="results/logs/plot_dpco_$(date +%Y%m%d_%H%M%S).log"
+export DPCL_PYTHON="$PWD/../.venv/bin/python"
+log="results/logs/plot_dpcl_$(date +%Y%m%d_%H%M%S).log"
 
 nohup bash -c '
   set -e
-  "$DPCO_PYTHON" -m pip install -e ".[plot]"
-  exec "$DPCO_PYTHON" -u plots/plot_dpco_training.py "$@"
+  "$DPCL_PYTHON" -m pip install -e ".[plot]"
+  exec "$DPCL_PYTHON" -u plots/plot_dpcl_training.py "$@"
 ' _ \
   --adam-dir YOUR_ADAM_RUN \
   --flip-dir YOUR_FLIP_RUN \
@@ -36,7 +36,7 @@ tail -n 30 "$log"
 
 ## 输出
 
-默认输出到 `results/figures/dpco_training_<时间戳>/`，`figures/` 与 `files/`、`runs/`、`logs/` 同级。可用 `--output-name experiment_a_w100` 指定该目录名；已有目录一律拒绝覆盖。图片、派生曲线CSV和绘图清单均保存在该任务目录。更换平滑参数时使用新的输出名，原CSV、旧图片与历史结果均保留；此前生成在 `results/files/plots/` 的结果不会自动搬移。
+默认输出到 `results/figures/dpcl_training_<时间戳>/`，`figures/` 与 `files/`、`runs/`、`logs/` 同级。可用 `--output-name experiment_a_w100` 指定该目录名；已有目录一律拒绝覆盖。图片、派生曲线CSV和绘图清单均保存在该任务目录。更换平滑参数时使用新的输出名，原CSV、旧图片与历史结果均保留；此前生成在 `results/files/plots/` 的结果不会自动搬移。
 
 | 文件名（默认各保存PNG和PDF） | 横轴 | 纵轴 |
 | --- | --- | --- |
@@ -105,7 +105,7 @@ tail -n 30 "$log"
 下面精确列出已导入的九个run名；假定服务器原结果保留在 `results/files/`。如果服务器CSV在另一位置，只修改 `base`，不改run名。日志中出现缺少metadata的提示是便携CSV导出的已知限制，不表示缺少训练指标。
 
 ```bash
-cd /home/jason_chia925_gmail_com/Project_DPCO/DPCO
+cd /home/jason_chia925_gmail_com/Project_DPCO/DPCL
 mkdir -p results/logs
 base="$PWD/results/files"
 prefix="mnist_noisy_mnist_cnn"
@@ -115,17 +115,17 @@ nohup bash -c '
   set -e
   py="/home/jason_chia925_gmail_com/Project_DPCO/.venv/bin/python"
   "$py" -m pip install -e ".[plot]"
-  exec "$py" -u plots/plot_dpco_training.py "$@"
+  exec "$py" -u plots/plot_dpcl_training.py "$@"
 ' _ \
   --adam-dir "$base/${prefix}_adam_42_0.001_symmetric20_noise_s0_cosine_20261030_062122" \
   --adam-dir "$base/${prefix}_adam_43_0.001_symmetric20_noise_s0_cosine_20261030_063925" \
   --adam-dir "$base/${prefix}_adam_44_0.001_symmetric20_noise_s0_cosine_20261030_065727" \
-  --flip-dir "$base/${prefix}_dpco_ema_b0.9_w-1_adam_42_0.001_symmetric20_noise_s0_cosine_20261030_063321" \
-  --flip-dir "$base/${prefix}_dpco_ema_b0.9_w-1_adam_43_0.001_symmetric20_noise_s0_cosine_20261030_065122" \
-  --flip-dir "$base/${prefix}_dpco_ema_b0.9_w-1_adam_44_0.001_symmetric20_noise_s0_cosine_20261030_070927" \
-  --filter-dir "$base/${prefix}_dpco_ema_b0.9_w0_adam_42_0.001_symmetric20_noise_s0_cosine_20261030_062714" \
-  --filter-dir "$base/${prefix}_dpco_ema_b0.9_w0_adam_43_0.001_symmetric20_noise_s0_cosine_20261030_064514" \
-  --filter-dir "$base/${prefix}_dpco_ema_b0.9_w0_adam_44_0.001_symmetric20_noise_s0_cosine_20261030_070322" \
+  --flip-dir "$base/${prefix}_dpcl_ema_b0.9_w-1_adam_42_0.001_symmetric20_noise_s0_cosine_20261030_063321" \
+  --flip-dir "$base/${prefix}_dpcl_ema_b0.9_w-1_adam_43_0.001_symmetric20_noise_s0_cosine_20261030_065122" \
+  --flip-dir "$base/${prefix}_dpcl_ema_b0.9_w-1_adam_44_0.001_symmetric20_noise_s0_cosine_20261030_070927" \
+  --filter-dir "$base/${prefix}_dpcl_ema_b0.9_w0_adam_42_0.001_symmetric20_noise_s0_cosine_20261030_062714" \
+  --filter-dir "$base/${prefix}_dpcl_ema_b0.9_w0_adam_43_0.001_symmetric20_noise_s0_cosine_20261030_064514" \
+  --filter-dir "$base/${prefix}_dpcl_ema_b0.9_w0_adam_44_0.001_symmetric20_noise_s0_cosine_20261030_070322" \
   --plot-set clean-original \
   --eval-smooth-window 1 \
   --time-axis wall \

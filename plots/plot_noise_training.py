@@ -20,8 +20,8 @@ import re
 ROOT = Path(__file__).resolve().parents[1]
 STYLES = {
     "adam": ("Adam", "#1f77b4", "-"),
-    "flip": ("DPCO Flip", "#d62728", "-"),
-    "filter": ("DPCO Filter", "#ff7f0e", "--"),
+    "flip": ("DPCL Flip", "#d62728", "-"),
+    "filter": ("DPCL Filter", "#ff7f0e", "--"),
 }
 PLOTS = ("noise-accuracy", "tradeoff", "test-accuracy", "edit-rate")
 MARKERS = ("o", "s", "^", "D", "v", "P", "X")
@@ -95,8 +95,8 @@ def identity(method, directory, sources):
     seed_match = re.search(r"(?:^|_)adam_(\d+)(?:_|$)", directory.name)
     beta_match = re.search(r"_ema_b([0-9.]+)_", directory.name)
     weight_match = re.search(r"_w(-?[0-9.]+)_", directory.name)
-    if method == "adam" and "_dpco_" in directory.name:
-        raise ValueError(f"{directory}: DPCO run cannot be labelled as the Adam baseline")
+    if method == "adam" and any(token in directory.name for token in ("_dpcl_", "_dpco_")):
+        raise ValueError(f"{directory}: DPCL run cannot be labelled as the Adam baseline")
     if method != "adam":
         expected_weight = -1 if method == "flip" else 0
         if weight_match and float(weight_match[1]) != expected_weight:
@@ -107,8 +107,8 @@ def identity(method, directory, sources):
     beta = float(beta_match[1]) if beta_match and method != "adam" else None
     if metadata is not None:
         config = metadata["config"]
-        expected = "adam" if method == "adam" else "dpco"
-        if config["training"].get("optimizer", "sgd") != "adam" or config["method"]["name"] != expected:
+        expected = ("adam",) if method == "adam" else ("dpcl", "dpco")
+        if config["training"].get("optimizer", "sgd") != "adam" or config["method"]["name"] not in expected:
             raise ValueError(f"{directory}: metadata does not describe {method} + Adam")
         actual_seed = int(config["seed"])
         if seed is not None and actual_seed != seed:
@@ -174,14 +174,19 @@ def load_run(method, directory, *, load_edits=True):
                            original_accuracy=original[1], noisy_accuracy=noisy[1], test_accuracy=test))
     edits = []
     if method != "adam" and load_edits:
-        path = directory / "dpco_steps.csv"
-        required = {"step", "valid_batch_size", "dpco_edited_count", "dpco_negative_count", "dpco_negative_weight"}
+        path = directory / "dpcl_steps.csv"
+        if not path.is_file():
+            # Read old exports without renaming files, columns or provenance.
+            path = directory / "dpco_steps.csv"
+        prefix = "dpcl" if path.name == "dpcl_steps.csv" else "dpco"
+        required = {"step", "valid_batch_size", *(f"{prefix}_{key}" for key in
+                    ("edited_count", "negative_count", "negative_weight"))}
         for row in rows(path, required, sources):
             step = numeric(row, "step", path, integer=True, minimum=1)
             batch = numeric(row, "valid_batch_size", path, integer=True, minimum=1)
-            edited = numeric(row, "dpco_edited_count", path, integer=True, maximum=batch)
-            negative = numeric(row, "dpco_negative_count", path, integer=True, maximum=batch)
-            weight = numeric(row, "dpco_negative_weight", path, minimum=-1, maximum=0)
+            edited = numeric(row, f"{prefix}_edited_count", path, integer=True, maximum=batch)
+            negative = numeric(row, f"{prefix}_negative_count", path, integer=True, maximum=batch)
+            weight = numeric(row, f"{prefix}_negative_weight", path, minimum=-1, maximum=0)
             if step != len(edits) + 1 or edited != negative or weight != (-1 if method == "flip" else 0):
                 raise ValueError(f"{path}: noncontiguous updates or incompatible intervention/weight")
             edits.append((step, edited, batch))

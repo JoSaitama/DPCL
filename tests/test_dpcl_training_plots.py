@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SPEC = importlib.util.spec_from_file_location("dpco_comparison_plots", ROOT / "plots/plot_dpco_training.py")
+SPEC = importlib.util.spec_from_file_location("dpcl_comparison_plots", ROOT / "plots/plot_dpcl_training.py")
 plots = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = plots
 SPEC.loader.exec_module(plots)
@@ -39,7 +39,7 @@ def fixture(directory, method=None, optimizer="adam"):
     write_csv(directory / "timing.csv", timing)
     if method is not None:
         config = {"training": {"optimizer": optimizer, "learning_rate": .0003},
-            "method": {"name": method if method in ("adam", "sgd") else "dpco",
+            "method": {"name": method if method in ("adam", "sgd") else "dpcl",
                        "negative_weight": 0 if method == "filter" else -1},
             "reference": {"name": "loss" if method in ("adam", "sgd") else "ema", "beta": .99}}
         path = directory.parent.parent / "logs" / directory.name
@@ -48,7 +48,7 @@ def fixture(directory, method=None, optimizer="adam"):
     return rows, timing
 
 
-class DPCOTrainingPlotTests(unittest.TestCase):
+class DPCLTrainingPlotTests(unittest.TestCase):
     def test_weighted_smoothing_complete_windows_and_time_units(self):
         with TemporaryDirectory() as tmp:
             directory = Path(tmp) / "run"
@@ -178,7 +178,7 @@ class DPCOTrainingPlotTests(unittest.TestCase):
                 plt.close(fig)
 
     def test_help_needs_neither_training_runtime_nor_matplotlib(self):
-        result = subprocess.run([sys.executable, "-S", str(ROOT / "plots/plot_dpco_training.py"), "--help"],
+        result = subprocess.run([sys.executable, "-S", str(ROOT / "plots/plot_dpcl_training.py"), "--help"],
                                 text=True, capture_output=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("--smooth-window", result.stdout)
@@ -213,7 +213,7 @@ class DPCOTrainingPlotTests(unittest.TestCase):
             fig = plots.make_figure(data, 'step', 'accuracy', 'Step', 'Acc', time_axis='wall', show_raw=False, plt=plt)
             try:
                 self.assertEqual([t.get_text() for t in fig.axes[0].get_legend().get_texts()],
-                                 ['SGD', 'DPCO Flip', 'DPCO Filter'])
+                                 ['SGD', 'DPCL Flip', 'DPCL Filter'])
                 self.assertEqual([line.get_color() for line in fig.axes[0].lines],
                                  ['#1f77b4', '#d62728', '#ff7f0e'])
             finally:

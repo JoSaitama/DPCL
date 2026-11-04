@@ -44,17 +44,17 @@ class ResultsPaths:
 def method_label(config):
     """Label optimizer and EMA weights without changing historical SGD labels."""
     label = config.method.name
-    if label == "dpco_policy":
-        label = "dpco_" + ("e" if config.reference.name == "error" else "l") + "_" + config.method.policy_mode
-        if config.method.policy_mode == "alternating" and config.method.alternating_first == "dpco":
-            label += "_first_dpco"
+    if label == "dpcl_policy":
+        label = "dpcl_" + ("e" if config.reference.name == "error" else "l") + "_" + config.method.policy_mode
+        if config.method.policy_mode == "alternating" and config.method.alternating_first == "dpcl":
+            label += "_first_dpcl"
     if config.reference.name == "ema":
-        label = "dpco_ema_b" + format(config.reference.beta, ".12g") + "_w" + format(config.method.negative_weight, ".12g").replace("+", "")
-    elif label in ("dpco", "dpco_loo", "dtv", "dtv_loo"):
+        label = "dpcl_ema_b" + format(config.reference.beta, ".12g") + "_w" + format(config.method.negative_weight, ".12g").replace("+", "")
+    elif label in ("dpcl", "dpcl_loo", "dtv", "dtv_loo"):
         suffix = {"error": "_e", "loss": "_l", "correct": "_r"}[config.reference.name]
         label = label.replace("_loo", "") + suffix + ("_loo" if label.endswith("_loo") else "")
-    if config.method.dpco_warmup_percent:
-        label += "_warmup" + format(config.method.dpco_warmup_percent, ".12g") + "pct"
+    if config.method.dpcl_warmup_percent:
+        label += "_warmup" + format(config.method.dpcl_warmup_percent, ".12g") + "pct"
     if config.training.optimizer == "adam" and config.method.name != "adam":
         label += "_adam"
     return label
@@ -68,7 +68,7 @@ def make_run_name(config, *, timestamp=None):
              str(config.seed), format(config.training.learning_rate, ".12g"))
     if config.data.name == "cifar100n":
         parts += (config.data.noise_type, "human" if config.data.is_human else f"synthetic_s{config.data.noise_seed}")
-    elif config.data.name == "mnist":
+    elif config.data.name in ("mnist", "digits"):
         parts += ("symmetric" + format(config.data.label_noise_percent, ".12g"),
                   f"noise_s{config.data.noise_seed}")
     elif config.data.name == "cnwl":

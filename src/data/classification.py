@@ -15,9 +15,12 @@ def open_training_images(config, base_dir, *, limit=None, progress=None):
         if progress:
             progress(event="data_ready", **images.identity)
         return images, images.identity
-    if config.name == "mnist":
-        from src.data.mnist import MNISTImages
-        images = MNISTImages(directory, label_noise_percent=config.label_noise_percent,
+    if config.name in ("mnist", "digits"):
+        if config.name == "digits":
+            from src.data.digits import DigitsImages as DigitImages
+        else:
+            from src.data.mnist import MNISTImages as DigitImages
+        images = DigitImages(directory, label_noise_percent=config.label_noise_percent,
             noise_seed=config.noise_seed, noise_percent=config.noise_percent,
             download=config.download, limit=limit, progress=progress)
         if progress:

@@ -28,7 +28,7 @@ def main():
                          {"mean": jnp.zeros(2)})
     batch = classification_batch(np.array([[5., -2.], [1., 4.], [-2., 1.], [-4., -3.]], np.float32),
                                  np.array([0, 1, 0, 0], np.int32))
-    for method_name, reference in (("sgd", "loss"), ("dpco", "error"), ("dpco", "loss")):
+    for method_name, reference in (("sgd", "loss"), ("dpcl", "error"), ("dpcl", "loss")):
         for training in (TrainingConfig(learning_rate=.1),
                          TrainingConfig(learning_rate=.1, total_steps=3, momentum=.9, nesterov=True,
                                         l2_coefficient=.0001, lr_schedule="cosine", min_learning_rate=.001)):
@@ -61,24 +61,24 @@ def main():
     # sharded trajectory, and must not replace the actual compiled update.
     from src.config import DiagnosticConfig
     from src.probes.training_diagnostics import TrainingDiagnostics
-    method = create_method("dpco", reference_name="loss", gradient_backend="jvp")
+    method = create_method("dpcl", reference_name="loss", gradient_backend="jvp")
     trainer = LocalMeshTrainer(task, method, make_updater(TrainingConfig(learning_rate=.01)), local_mesh(jax.local_devices()))
     before = jax.device_put(initial, trainer.replicated)
     after, _ = trainer.compile_step()(before, sharded_batch, jax.random.key(0))
     diagnostic = TrainingDiagnostics(task, method, DiagnosticConfig(enabled=True, transfer=False, lr_scales=(1.,)),
-        reference_name="loss", trajectory_method="dpco")
+        reference_name="loss", trajectory_method="dpcl")
     rows = diagnostic.run(before, after, sharded_batch, learning_rate=.01, rng_key=jax.random.key(0),
         context={"batch_id": "global_sharded_batch"}, cumulative_eta_before=0.)
     row = next(row for stream, row in rows if stream == "diagnostic_update")
     assert row["direction_relative_error"] < 2e-5, row
     assert row["model_state_max_abs_error"] < 2e-6, row
     # Opt-in policies must preserve global BN and the same original-B algebra.
-    # Compare against independent dense SGD/DPCO/DTV rounds, including both
+    # Compare against independent dense SGD/DPCL/DTV rounds, including both
     # branches of the alternating conditional on a replicated policy counter.
     for mode, first in (("continuous", "sgd"), ("alternating", "sgd"),
-                        ("alternating", "dpco"), ("half", "sgd")):
+                        ("alternating", "dpcl"), ("half", "sgd")):
         for reference in ("loss", "error"):
-            method = create_method("dpco_policy", policy_mode=mode,
+            method = create_method("dpcl_policy", policy_mode=mode,
                 reference_name=reference, gradient_backend="jvp", alternating_first=first)
             trainer = LocalMeshTrainer(task, method, make_updater(TrainingConfig(learning_rate=.01)),
                                        local_mesh(jax.local_devices()))
@@ -86,8 +86,8 @@ def main():
             expected = initial
             compiled = trainer.compile_step()
             for t in range(3):
-                selected = {"continuous": "dpco", "half": "dtv",
-                            "alternating": "dpco" if (t + int(first == "dpco")) % 2 else "sgd"}[mode]
+                selected = {"continuous": "dpcl", "half": "dtv",
+                            "alternating": "dpcl" if (t + int(first == "dpcl")) % 2 else "sgd"}[mode]
                 baseline = Trainer(task, create_method(selected, reference_name=reference,
                     gradient_backend="audit"), trainer.updater)
                 expected, _ = baseline.compile_step()(expected, batch, jax.random.key(t))
@@ -98,12 +98,12 @@ def main():
                 assert int(actual.method_state.updates) == t + 1
     # EMA + Adam must share a single global raw-gradient history; compare with
     # dense per-example Jacobians across multiple updates and both edit rules.
-    from src.methods.dpco_history import HistoricalDPCO
+    from src.methods.dpcl_history import HistoricalDPCL
     from src.training.updates import AdamUpdate
     for weight in (0., -1., -.5):
         updater = AdamUpdate(.001)
-        audit = HistoricalDPCO(.85, weight, "audit")
-        method = HistoricalDPCO(.85, weight, "jvp")
+        audit = HistoricalDPCL(.85, weight, "audit")
+        method = HistoricalDPCL(.85, weight, "jvp")
         dense = Trainer(task, audit, updater).compile_step()
         mesh_trainer = LocalMeshTrainer(task, method, updater, local_mesh(jax.local_devices()))
         expected = initial._replace(method_state=audit.initial_state(initial.params),
@@ -115,7 +115,7 @@ def main():
             actual, metrics = compiled(actual, sharded_batch, jax.random.key(t))
             for a, b in zip(jax.tree_util.tree_leaves(expected), jax.tree_util.tree_leaves(actual)):
                 np.testing.assert_allclose(a, b, rtol=2e-5, atol=2e-6)
-            np.testing.assert_allclose(metrics["dpco_negative_count"], expected_metrics["dpco_negative_count"])
+            np.testing.assert_allclose(metrics["dpcl_negative_count"], expected_metrics["dpcl_negative_count"])
             assert int(actual.method_state.updates) == t + 1
             assert int(actual.optimizer_state.count) == t + 1
     # New native-image backbone: global convolution/BatchNorm, EMA and Adam
@@ -129,8 +129,8 @@ def main():
                                          np.array([0, 1, 2, 3], np.int32))
     native_updater = AdamUpdate(.001)
     for weight in (0., -1.):
-        oracle = HistoricalDPCO(.85, weight, "audit")
-        method = HistoricalDPCO(.85, weight, "jvp")
+        oracle = HistoricalDPCL(.85, weight, "audit")
+        method = HistoricalDPCL(.85, weight, "jvp")
         native_mesh = LocalMeshTrainer(native_task, method, native_updater, local_mesh(jax.local_devices()))
         expected = TrainState(native_params, native_buffers, oracle.initial_state(native_params),
                               native_updater.init(native_params))
@@ -142,7 +142,7 @@ def main():
             actual, _ = mesh_step(actual, native_batch, jax.random.key(t))
             for a, b in zip(jax.tree_util.tree_leaves(expected), jax.tree_util.tree_leaves(actual)):
                 np.testing.assert_allclose(a, b, rtol=3e-4, atol=3e-6)
-    print("PASS: two-device global BN, full-gradient oracle, legacy updates, DPCO policies and EMA/Adam weights")
+    print("PASS: two-device global BN, full-gradient oracle, legacy updates, DPCL policies and EMA/Adam weights")
 
 
 if __name__ == "__main__":

@@ -19,6 +19,6 @@ class CorrectSubsetReference:
 
     def build(self, gradients, valid_mask, feedback, *, exclude_self=False):
         # The reference denominator is the correct count. The final update still
-        # uses the original valid B in the existing DPCO aggregation path.
+        # uses the original valid B in the existing DPCL aggregation path.
         return selected_mean(gradients, self.selection_mask(valid_mask, feedback),
                              exclude_self=exclude_self)

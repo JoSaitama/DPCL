@@ -23,7 +23,7 @@ def write_csv(path, data):
 
 
 def fixture(root, method, beta=None, counts=(8, 2), seed=42):
-    suffix = f"dpco_ema_b{beta}_w{'-1' if method == 'flip' else '0'}_" if beta is not None else ""
+    suffix = f"dpcl_ema_b{beta}_w{'-1' if method == 'flip' else '0'}_" if beta is not None else ""
     directory = root / "files" / f"noise{counts[1]}" / f"test_{suffix}adam_{seed}"
     directory.mkdir(parents=True)
     write_csv(directory / "evaluation.csv", [dict(step=s, samples_seen=s * 8, val_top1=.1 + s / 10)
@@ -37,8 +37,8 @@ def fixture(root, method, beta=None, counts=(8, 2), seed=42):
                                label_source=plots.GROUPS[group], sample_count=count, top1=acc))
     write_csv(directory / "group_evaluation.csv", groups)
     if method != "adam":
-        write_csv(directory / "dpco_steps.csv", [dict(step=s, valid_batch_size=8,
-                  dpco_negative_count=s, dpco_edited_count=s, dpco_negative_weight=-1 if method == "flip" else 0)
+        write_csv(directory / "dpcl_steps.csv", [dict(step=s, valid_batch_size=8,
+                  dpcl_negative_count=s, dpcl_edited_count=s, dpcl_negative_weight=-1 if method == "flip" else 0)
                   for s in range(1, 5)])
     return directory
 
@@ -107,7 +107,7 @@ class NoiseTrainingPlotTests(unittest.TestCase):
             logs = root / 'logs' / directory.name
             logs.mkdir(parents=True)
             metadata = dict(config=dict(seed=42, training=dict(optimizer='adam'),
-                                       method=dict(name='dpco', negative_weight=-1),
+                                       method=dict(name='dpcl', negative_weight=-1),
                                        reference=dict(name='ema', beta=.96)))
             path = logs / 'metadata.json'
             path.write_text(json.dumps(metadata))
@@ -126,7 +126,7 @@ class NoiseTrainingPlotTests(unittest.TestCase):
                 plots.load_run('flip', directory, load_edits=False)
             with self.assertRaisesRegex(ValueError, 'Adam baseline'):
                 plots.load_run('adam', directory, load_edits=False)
-            path = directory / 'dpco_steps.csv'
+            path = directory / 'dpcl_steps.csv'
             with path.open() as handle:
                 data = list(csv.DictReader(handle))
             write_csv(path, data[:-1])
@@ -134,9 +134,9 @@ class NoiseTrainingPlotTests(unittest.TestCase):
                 plots.load_run('filter', directory)
             # Evaluation-only plots can still use exports without intervention rows.
             self.assertEqual(len(plots.load_run('filter', directory, load_edits=False).points), 3)
-            data[-1]['dpco_edited_count'] = '9'
+            data[-1]['dpcl_edited_count'] = '9'
             write_csv(path, data)
-            with self.assertRaisesRegex(ValueError, 'invalid dpco_edited_count'):
+            with self.assertRaisesRegex(ValueError, 'invalid dpcl_edited_count'):
                 plots.load_run('filter', directory)
 
     def test_real_cpu_render_provenance_dimensions_and_styles(self):
@@ -208,7 +208,7 @@ class NoiseTrainingPlotTests(unittest.TestCase):
                     elif color in {'#1f77b4', '#d62728', *shades['flip'].values()}:
                         self.assertEqual(line.get_linestyle(), '-')
                 if ax.get_ylabel() == 'Edited contributions (%)':
-                    method = 'flip' if 'DPCO Flip' in ax.get_title() else 'filter'
+                    method = 'flip' if 'DPCL Flip' in ax.get_title() else 'filter'
                     actual = {line.get_color() for line in ax.lines if line.get_color() != '.5'}
                     self.assertEqual(actual, set(shades[method].values()))
                     # Default smoothing draws only three curves, no raw overlay.

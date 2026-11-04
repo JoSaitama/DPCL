@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SPEC = importlib.util.spec_from_file_location("dpco_group_plots", ROOT / "plots/plot_dpco_training.py")
+SPEC = importlib.util.spec_from_file_location("dpcl_group_plots", ROOT / "plots/plot_dpcl_training.py")
 plots = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = plots
 SPEC.loader.exec_module(plots)
@@ -43,7 +43,7 @@ def fixture(directory, offset_s=0, seed=None, method="adam", optimizer="adam"):
     write_csv(directory / "group_evaluation.csv", groups)
     if seed is not None:
         config = {"seed": seed, "training": {"optimizer": optimizer},
-                  "method": {"name": method if method in ("adam", "sgd") else "dpco",
+                  "method": {"name": method if method in ("adam", "sgd") else "dpcl",
                              "negative_weight": 0 if method == "filter" else -1},
                   "reference": {"name": "ema", "beta": .9}}
         logs = directory.parent.parent / "logs" / directory.name
@@ -233,7 +233,7 @@ class EvaluationPlotTests(unittest.TestCase):
             for method in ("sgd", "flip", "filter"):
                 for i, seed in enumerate((42, 43, 44)):
                     name = (f"mnist_noisy_mnist_cnn_sgd_{seed}_0.001_run" if method == "sgd" else
-                            f"mnist_noisy_mnist_cnn_dpco_ema_b0.9_w{'-1' if method == 'flip' else '0'}_{seed}_0.001_run")
+                            f"mnist_noisy_mnist_cnn_dpcl_ema_b0.9_w{'-1' if method == 'flip' else '0'}_{seed}_0.001_run")
                     path = root / "results/files" / name
                     fixture(path, offset_s=i * 30, seed=seed, method=method, optimizer="sgd")
                     runs.append(plots.load_evaluation_run(method, path, optimizer="sgd"))
@@ -248,7 +248,7 @@ class EvaluationPlotTests(unittest.TestCase):
             fig = plots.make_evaluation_figure(runs, aggregate, 'step', 'clean_ce', 'Step', 'CE', show_raw=False, plt=plt)
             try:
                 labels = [t.get_text() for t in fig.axes[0].get_legend().get_texts()]
-                self.assertEqual(labels, ['SGD (n=3)', 'DPCO Flip (n=3)', 'DPCO Filter (n=3)'])
+                self.assertEqual(labels, ['SGD (n=3)', 'DPCL Flip (n=3)', 'DPCL Filter (n=3)'])
                 self.assertEqual(fig.axes[0].lines[0].get_color(), '#1f77b4')
             finally:
                 plt.close(fig)
@@ -267,7 +267,7 @@ class EvaluationPlotTests(unittest.TestCase):
                 # Accidentally providing two baselines is rejected by argparse.
                 with self.assertRaises(SystemExit), patch('sys.stderr', StringIO()):
                     plots.main(args + ['--adam-dir', str(runs[0].directory)])
-                # A single DPCO/Adam run cannot slip into an SGD comparison.
+                # A single DPCL/Adam run cannot slip into an SGD comparison.
                 path = root / 'results/logs' / runs[3].directory.name / 'metadata.json'
                 metadata = json.loads(path.read_text())
                 metadata['config']['training']['optimizer'] = 'adam'
@@ -286,8 +286,8 @@ class EvaluationPlotTests(unittest.TestCase):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             cases = [('sgd', 'mnist_noisy_mnist_cnn_sgd_42_0.001_run', 42),
-                     ('flip', 'mnist_noisy_mnist_cnn_dpco_ema_b0.9_w-1_43_0.001_run', 43),
-                     ('filter', 'mnist_noisy_mnist_cnn_dpco_ema_b0.9_w0_44_0.001_run', 44)]
+                     ('flip', 'mnist_noisy_mnist_cnn_dpcl_ema_b0.9_w-1_43_0.001_run', 43),
+                     ('filter', 'mnist_noisy_mnist_cnn_dpcl_ema_b0.9_w0_44_0.001_run', 44)]
             for method, name, seed in cases:
                 path = root / name
                 fixture(path)

@@ -1,36 +1,39 @@
-# Untuned native 32x32 pilot. Official CIFAR-100N human labels, NOT random 40% noise.
+# Exploratory mechanism preset, not the professor's unknown MNIST recipe.
 seed = 42
 global_batch_size = 128
 
 [data]
-name = "cifar100n"
-num_classes = 100
-image_size = 32
+name = "mnist"
+num_classes = 10
+image_size = 28
 mode = "noisy"
-prepared_dir = "../data/cifar100n"
-noise_type = "noisy100"
-is_human = true
-# This checks the loaded mismatch percentage; it never changes human labels.
-noise_percent = 40.2
+prepared_dir = "../data/mnist"
+noise_type = "symmetric"
+is_human = false
+noise_seed = 0
+label_noise_percent = 20.0
 download = false
 
 [model]
-name = "cifar_resnet34"
+name = "mnist_cnn"
 initialization = "random"
 precision = "float32"
 
 [method]
-name = "dpco"
+name = "dpcl"
 negative_weight = -1.0
 
 [reference]
 name = "ema"
-beta = 0.9
+beta = 0.99
 
 [training]
 optimizer = "adam"
 learning_rate = 0.001
-total_steps = 100
+# 20 drop-last data traversals: floor(60000/128) * 20.
+total_steps = 9360
+lr_schedule = "cosine"
+min_learning_rate = 0.000001
 adam_beta1 = 0.9
 adam_beta2 = 0.999
 adam_epsilon = 1e-8
@@ -47,16 +50,16 @@ root_dir = "results"
 
 [logging]
 mode = "steps"
-interval = 5
+interval = 50
 csv_flush_steps = 50
 timing_window_steps = 50
 
 [evaluation]
-mode = "epochs"
-interval = 1.0
+mode = "steps"
+interval = 468
 
 [checkpoints]
-latest_every_steps = 100
+latest_every_steps = 2340
 at_epoch_end = false
 
 [probes]

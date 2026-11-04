@@ -11,7 +11,7 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from src.training.launch import absolute_path, add_overrides, diagnostic_overrides, dpco_overrides, dpco_cli_args, cifar_overrides, cifar_cli_args, resolve_config
+from src.training.launch import absolute_path, add_overrides, diagnostic_overrides, dpcl_overrides, dpcl_cli_args, cifar_overrides, cifar_cli_args, resolve_config
 from src.training.runtime import configure_worker0, require_local_tpu
 from src.training.results import ResultsPaths
 from src.training.status import RunStatus
@@ -37,14 +37,14 @@ def run(args, config, devices, *, status):
     from src.training.local_mesh import LocalMeshTrainer, local_mesh
     from src.training.metrics import task_metrics
     from src.training.updates import make_updater
-    from src.training.schedules import dpco_warmup_steps
+    from src.training.schedules import dpcl_warmup_steps
 
     batch_size, image_size = config.global_batch_size, config.data.image_size
     if batch_size % len(devices):
         raise ValueError(f"Global batch size {batch_size} must be divisible by {len(devices)} local TPU devices")
     if config.execution.gradient_backend != "jvp":
         raise ValueError("TPU entry requires execution.gradient_backend='jvp' to avoid full training Jacobians")
-    if config.data.mode != "clean" and config.data.name not in ("cifar100n", "mnist", "cnwl") and not config.data.noise_manifest:
+    if config.data.mode != "clean" and config.data.name not in ("cifar100n", "mnist", "digits", "cnwl") and not config.data.noise_manifest:
         raise ValueError("Data mismatch modes are not implemented; a label must not silently leave data clean")
     limit = max(32, 2 * batch_size) if args.mode == "smoke" else None
     images, data_identity = open_training_images(config.data, ROOT, limit=limit,
@@ -64,11 +64,11 @@ def run(args, config, devices, *, status):
         method = create_method(config.method.name, reference_name=config.reference.name,
             flip_probability=config.method.flip_probability, gradient_backend="jvp",
             policy_mode=config.method.policy_mode, alternating_first=config.method.alternating_first,
-            warmup_steps=dpco_warmup_steps(config), reference_beta=config.reference.beta,
+            warmup_steps=dpcl_warmup_steps(config), reference_beta=config.reference.beta,
             negative_weight=config.method.negative_weight)
         if config.reference.name == "ema":
             state = state._replace(method_state=jax.device_put(method.initial_state(params), replicated))
-        elif config.method.name == "dpco_policy" or dpco_warmup_steps(config):
+        elif config.method.name == "dpcl_policy" or dpcl_warmup_steps(config):
             state = state._replace(method_state=jax.device_put(method.initial_state(), replicated))
         trainer = LocalMeshTrainer(train_task, method, updater, mesh)
         source = ImageBatchSource(images, batch_size, image_size, config.seed)
@@ -119,9 +119,10 @@ def run(args, config, devices, *, status):
         elif config.data.name == "cifar100n":
             from src.training.evaluation import cifar100n_evaluation
             evaluation = cifar100n_evaluation(images, eval_task, batch_size, batch_metrics)
-        elif config.data.name == "mnist":
+        elif config.data.name in ("mnist", "digits"):
             from src.training.evaluation import noisy_classification_evaluation
             evaluation = noisy_classification_evaluation(images, eval_task, batch_size, image_size,
+                "fixed_digits_held_out_test_no_model_selection" if config.data.name == "digits" else
                 "official_mnist_test_eval_no_model_selection", batch_metrics)
         elif config.data.noise_manifest:
             from src.training.evaluation import noisy_classification_evaluation
@@ -152,15 +153,17 @@ def run(args, config, devices, *, status):
             "data_plan": data_identity, "data_fingerprint": images.fingerprint,
             "prepared_database": str(images.path), "split_counts": images.counts,
             "smoke_is_not_full_dataset_validation": args.mode == "smoke",
-            "normalization": ("MNIST uint8/255; native28 grayscale; no augmentation" if config.data.name == "mnist" else
+            "normalization": ("Digits pixels/16; native8 grayscale; no augmentation" if config.data.name == "digits" else
+                "MNIST uint8/255; native28 grayscale; no augmentation" if config.data.name == "mnist" else
                 "CNWL TFDS-style OpenCV INTER_AREA84/JPEG72; ImageNet mean/std; train random resized crop/flip; eval full84" if config.data.name == "cnwl" else
                 "CIFAR100 mean/std; train zero-pad4/random-crop32/flip; eval native32" if config.data.name == "cifar100n" else
                 "ImageNet mean/std; train random resized crop and horizontal flip; eval resize/center crop"),
             "input_channels": getattr(images, "channels", 3),
             "evaluation_split": ("official_cnwl_shared_clean_validation" if config.data.name == "cnwl" else
+                "fixed_digits_held_out_test_no_model_selection" if config.data.name == "digits" else
                 "official_test_monitor_only_no_best_selection" if config.data.name in ("cifar100n", "mnist") else "configured_validation"),
             "group_evaluation": ("clean original-label and corrupted observed-label groups only; web oracle labels unavailable; audit metadata excluded from training" if config.data.name == "cnwl" else
-                "fixed reference-label clean/corrupted groups; truth metadata excluded from training batch" if config.data.name in ("cifar100n", "mnist") or config.data.noise_manifest else None),
+                "fixed reference-label clean/corrupted groups; truth metadata excluded from training batch" if config.data.name in ("cifar100n", "mnist", "digits") or config.data.noise_manifest else None),
             "train_tail": "drop_last_to_exclude_padding_from_training_batchnorm",
             "evaluation_tail": "padded_with_valid_count_weighting",
             "optimizer": config.training.optimizer,
@@ -199,7 +202,7 @@ def main():
                             steps=args.steps, batch_size=args.batch_size, seed=args.seed,
                             method=args.method, dataset=args.dataset, model=args.model,
                             alternating_first=args.alternating_first,
-                            dpco_warmup_percent=args.dpco_warmup_percent,
+                            dpcl_warmup_percent=args.dpcl_warmup_percent,
                             data_mode=args.data_mode, data_dir=args.data_dir,
                             l2_coefficient=args.l2_coefficient,
                             momentum=args.momentum, nesterov=args.nesterov,
@@ -208,7 +211,7 @@ def main():
                             checkpoint_every_steps=args.checkpoint_every_steps,
                             checkpoints=args.checkpoints,
                             eval_every_steps=args.eval_every_steps, eval_every_epochs=args.eval_every_epochs,
-                            **diagnostic_overrides(args), **dpco_overrides(args), **cifar_overrides(args), **mechanism_overrides(args))
+                            **diagnostic_overrides(args), **dpcl_overrides(args), **cifar_overrides(args), **mechanism_overrides(args))
     if args.resume and not config.checkpoints.enabled:
         parser.error("Resume requires checkpoints enabled; --no-checkpoints runs cannot be resumed")
     paths = ResultsPaths.resolve(config.results.root_dir, base_dir=ROOT).experiment(args.run_name)
@@ -216,14 +219,14 @@ def main():
     with status.monitor():
         status.record("started")
         settings = configure_worker0(config.execution)
-        # This host lock prevents concurrent SGD/DPCO jobs from claiming the same
+        # This host lock prevents concurrent SGD/DPCL jobs from claiming the same
         # chips. It does not start, contact, or place work on worker1.
-        lock_path = Path(tempfile.gettempdir()) / f"dpco-tpu-worker0-{os.getuid()}.lock"
+        lock_path = Path(tempfile.gettempdir()) / f"dpcl-tpu-worker0-{os.getuid()}.lock"
         with lock_path.open("a") as lock:
             try:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
-                raise RuntimeError("Another DPCO TPU job is running on this host; run SGD and DPCO sequentially") from None
+                raise RuntimeError("Another DPCL TPU job is running on this host; run SGD and DPCL sequentially") from None
             devices = require_local_tpu(config.execution)
             print(json.dumps({"event": "tpu_ready", "devices": [str(d) for d in devices],
                               "local_process_only": True, "runtime_settings": settings}), flush=True)

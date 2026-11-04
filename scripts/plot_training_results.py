@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Plot exported DPCO training curves on macOS without JAX or training imports.
+"""Plot exported DPCL training curves on macOS without JAX or training imports.
 
 Dependencies: Python 3.11+ and matplotlib. Read source CSV/JSON files only.
 Example, from the code repository:
@@ -23,15 +23,15 @@ import sys
 
 
 REPO = Path(__file__).resolve().parents[1]
-COLORS = {"SGD": "#2563EB", "DPCO-E": "#D62728", "DPCO-L": "#FF7F0E"}
+COLORS = {"SGD": "#2563EB", "DPCL-E": "#D62728", "DPCL-L": "#FF7F0E"}
 GROUPS = {
-    "continuous": ("constant", "continuous", None, "Continuous DPCO vs SGD"),
-    "half": ("constant", "half", None, "Half/filter DPCO vs SGD"),
-    "alternating_sgd_first": ("constant", "alternating", "sgd", "Alternating DPCO vs SGD (SGD first)"),
-    "alternating_dpco_first": ("constant", "alternating", "dpco", "Alternating DPCO vs SGD (DPCO first)"),
-    "cosine": ("cosine", "continuous", None, "Cosine decay to zero: DPCO vs SGD"),
-    "inverse_sqrt": ("inverse_sqrt", "continuous", None, "Inverse-square-root decay: DPCO vs SGD"),
-    "warmup10": ("constant", "warmup10", None, "10% SGD prefix before DPCO vs SGD"),
+    "continuous": ("constant", "continuous", None, "Continuous DPCL vs SGD"),
+    "half": ("constant", "half", None, "Half/filter DPCL vs SGD"),
+    "alternating_sgd_first": ("constant", "alternating", "sgd", "Alternating DPCL vs SGD (SGD first)"),
+    "alternating_dpcl_first": ("constant", "alternating", "dpcl", "Alternating DPCL vs SGD (DPCL first)"),
+    "cosine": ("cosine", "continuous", None, "Cosine decay to zero: DPCL vs SGD"),
+    "inverse_sqrt": ("inverse_sqrt", "continuous", None, "Inverse-square-root decay: DPCL vs SGD"),
+    "warmup10": ("constant", "warmup10", None, "10% SGD prefix before DPCL vs SGD"),
     "warmup_percent": ("constant", "warmup_percent", None, "10% vs 30% SGD prefix at fixed LR"),
 }
 DEFAULT_GROUPS = tuple(GROUPS)
@@ -77,20 +77,31 @@ def trailing_mean(values, window):
 def method_identity(config):
     if config["training"].get("optimizer", "sgd") != "sgd":
         raise ValueError("This legacy report supports SGD runs only; Adam runs have different update semantics")
-    method = config["method"]
+    method = normalized_method(config["method"])
     if method["name"] == "sgd":
         return "SGD", "sgd", None
-    if method["name"] not in ("dpco", "dpco_policy"):
+    if method["name"] not in ("dpcl", "dpcl_policy"):
         raise ValueError(f"Unsupported method: {method['name']}")
     reference = config["reference"]["name"]
     if reference not in ("loss", "error"):
         raise ValueError(f"Unsupported reference: {reference}")
-    family = "DPCO-E" if reference == "error" else "DPCO-L"
-    warmup = method.get("dpco_warmup_percent", 0.)
+    family = "DPCL-E" if reference == "error" else "DPCL-L"
+    warmup = method.get("dpcl_warmup_percent", 0.)
     if warmup:
         return family, "warmup10" if warmup == 10 else f"warmup{warmup:g}", None
     mode = method.get("policy_mode", "continuous")
     return family, mode, method.get("alternating_first", "sgd") if mode == "alternating" else None
+
+
+def normalized_method(method):
+    """Interpret legacy exports in memory; retain their bytes and metadata."""
+    method = dict(method)
+    for key in ("name", "alternating_first"):
+        if key in method:
+            method[key] = method[key].replace("dpco", "dpcl")
+    if "dpco_warmup_percent" in method and "dpcl_warmup_percent" not in method:
+        method["dpcl_warmup_percent"] = method["dpco_warmup_percent"]
+    return method
 
 
 @dataclass
@@ -112,7 +123,8 @@ class Run:
 
     @property
     def config(self):
-        return self.metadata["config"]
+        config = self.metadata["config"]
+        return {**config, "method": normalized_method(config["method"])}
 
     @property
     def commit(self):
@@ -153,7 +165,7 @@ def validate_training(rows, config, name):
 
 def validate_policy(run):
     path = run.directory/"policy_steps.csv"
-    required = run.config["method"]["name"] == "dpco_policy" or run.config["method"].get("dpco_warmup_percent", 0) > 0
+    required = run.config["method"]["name"] == "dpcl_policy" or run.config["method"].get("dpcl_warmup_percent", 0) > 0
     if not path.exists():
         if required:
             raise ValueError(f"{run.name}: missing policy_steps.csv")
@@ -161,13 +173,13 @@ def validate_policy(run):
     _, rows = read_csv(path)
     if len(rows) != len(run.rows):
         raise ValueError(f"{run.name}: policy and training row counts differ")
-    count = math.ceil(len(rows)*run.config["method"].get("dpco_warmup_percent", 0)/100)
+    count = math.ceil(len(rows)*run.config["method"].get("dpcl_warmup_percent", 0)/100)
     for t, row in enumerate(rows):
         alpha = 0. if t < count else (1. if run.mode.startswith("warmup") else
-            .5 if run.mode == "half" else float((t+int(run.first == "dpco")) % 2)
+            .5 if run.mode == "half" else float((t+int(run.first == "dpcl")) % 2)
             if run.mode == "alternating" else 1.)
-        executed = {0.: "sgd", .5: "half_dpco", 1.: "dpco"}[alpha]
-        if int(row["step"]) != t+1 or float(row["policy_alpha"]) != alpha or row["executed_method"] != executed:
+        executed = {0.: "sgd", .5: "half_dpcl", 1.: "dpcl"}[alpha]
+        if int(row["step"]) != t+1 or float(row["policy_alpha"]) != alpha or row["executed_method"].replace("dpco", "dpcl") != executed:
             raise ValueError(f"{run.name}: policy mismatch at update {t+1}")
 
 
@@ -228,7 +240,7 @@ def select_group(runs, group, rates, *, warmup_comparison_lr=.01, warmup_percent
         keys = [(r.family, r.initial_lr, r.mode) for r in selected]
         expected = [("SGD", warmup_comparison_lr, "sgd")]
         expected += [(family, warmup_comparison_lr, f"warmup{percent:g}")
-                     for family in ("DPCO-E", "DPCO-L") for percent in warmup_percents]
+                     for family in ("DPCL-E", "DPCL-L") for percent in warmup_percents]
         duplicates = [key for key, count in Counter(keys).items() if count > 1]
         if duplicates:
             names = [r.name for r in selected if (r.family, r.initial_lr, r.mode) in duplicates]
@@ -324,7 +336,7 @@ def plot_group(group, runs, missing, args, output, limits):
               "cumulative_eta_before": "Cumulative learning rate"}[args.x_axis]
     for run in runs:
         style = ("-" if run.family == "SGD" else
-                 percent_styles[run.config["method"]["dpco_warmup_percent"]]) if compare_percent else styles[run.initial_lr]
+                 percent_styles[run.config["method"]["dpcl_warmup_percent"]]) if compare_percent else styles[run.initial_lr]
         x = x_values(run, args.x_axis)
         ce = trailing_mean([r["train_ce"] for r in run.rows], args.smooth_window)
         acc = trailing_mean([100*r["train_top1"] for r in run.rows], args.smooth_window)
@@ -501,9 +513,9 @@ def main(argv=None):
         image = f'<img src="{html.escape(png)}" alt="{html.escape(plot["title"])}">' if png else ""
         notes = " ".join(plot["comparison_notes"])
         cards.append(f'<section><h2>{html.escape(plot["title"])}</h2>{image}<p>{links}</p><p>{html.escape(notes)}</p></section>')
-    page = '<!doctype html><meta charset="utf-8"><title>DPCO training curves</title><style>body{font:16px system-ui;margin:32px auto;max-width:1320px;padding:0 24px;color:#172033}img{width:100%;height:auto}section{margin:36px 0}a{margin-right:16px}p{line-height:1.6}</style>'
-    page += f'<h1>DPCO training curves</h1><p>{len(runs)} completed runs. Seed {args.seed}, batch {args.batch_size}, {args.steps} updates. '
-    page += f'Trailing mean: {args.smooth_window} steps, growing prefix. Blue: SGD; red: DPCO-E; orange: DPCO-L. '
+    page = '<!doctype html><meta charset="utf-8"><title>DPCL training curves</title><style>body{font:16px system-ui;margin:32px auto;max-width:1320px;padding:0 24px;color:#172033}img{width:100%;height:auto}section{margin:36px 0}a{margin-right:16px}p{line-height:1.6}</style>'
+    page += f'<h1>DPCL training curves</h1><p>{len(runs)} completed runs. Seed {args.seed}, batch {args.batch_size}, {args.steps} updates. '
+    page += f'Trailing mean: {args.smooth_window} steps, growing prefix. Blue: SGD; red: DPCL-E; orange: DPCL-L. '
     page += 'Initial LR 0.01 uses pale sparse dashes; 0.05 uses solid method colors with the default two-rate selection. '
     page += 'These are unsigned online training metrics. Different LR cohorts can have different code revisions; see the manifest. No convergence theorem is certified by these curves.</p>'
     page += '<p><a href="run_inventory.csv">Run inventory</a><a href="training_summary.csv">Training summaries</a><a href="csv_inventory.csv">CSV inventory</a><a href="plot_manifest.json">Manifest</a></p>' + "".join(cards)

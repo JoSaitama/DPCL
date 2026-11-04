@@ -24,7 +24,7 @@ from src.data.cifar100n_prepare import atomic_json, canonical, file_digest, prep
 
 HOMEPAGE = "https://google.github.io/controlled-noisy-web-labels/index.html"
 METADATA_URL = "https://storage.googleapis.com/cnlw/dataset_no_images.zip"
-FORMAT = "dpco-cnwl-red-v1"
+FORMAT = "dpcl-cnwl-red-v1"
 LEVELS = (0, 5, 10, 15, 20, 30, 40, 50, 60, 80)
 # Published TFDS split counts, which differ slightly from the paper's rounded 50K.
 RED_COUNTS = {0: 50000, 5: 50000, 10: 50000, 15: 50000, 20: 50000,

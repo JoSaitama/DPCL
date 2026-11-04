@@ -16,7 +16,7 @@ import numpy as np
 from src.config import load_config
 from src.data.batch import classification_batch
 from src.methods import create_method
-from src.methods.dpco_history import HistoricalDPCO, ReferenceState
+from src.methods.dpcl_history import HistoricalDPCL, ReferenceState
 from src.tasks.classification import ClassificationTask
 from src.training import TrainState, Trainer
 from src.training.experiment import ExperimentRunner
@@ -26,7 +26,7 @@ from src.training.updates import AdamUpdate
 from tests.helpers import QuadraticTask, scalar_batch
 from tests.test_observation import ROOT, fixture_config, fixture_components, read_rows
 
-PRESET = ROOT / "configs/tpu/dpco/imagenet100_resnet50.toml"
+PRESET = ROOT / "configs/tpu/dpcl/imagenet100_resnet50.toml"
 
 
 def assert_tree(test, left, right, *, exact=False, atol=1e-6):
@@ -38,10 +38,10 @@ def assert_tree(test, left, right, *, exact=False, atol=1e-6):
             np.testing.assert_allclose(a, b, rtol=1e-5, atol=atol)
 
 
-def components(root, weight=-1., method="dpco"):
+def components(root, weight=-1., method="dpcl"):
     c = fixture_config(root)
     c = replace(c, method=replace(c.method, name=method, negative_weight=weight),
-                reference=replace(c.reference, name="ema" if method == "dpco" else "loss", beta=.8),
+                reference=replace(c.reference, name="ema" if method == "dpcl" else "loss", beta=.8),
                 training=replace(c.training, optimizer="adam", learning_rate=.01))
     trainer, source, evaluation, initial, _ = fixture_components(c)
     trainer.method = create_method(method, reference_name=c.reference.name,
@@ -49,21 +49,21 @@ def components(root, weight=-1., method="dpco"):
     return c, trainer, source, evaluation, initial
 
 
-class HistoricalDPCOTests(unittest.TestCase):
+class HistoricalDPCLTests(unittest.TestCase):
     def test_first_step_and_arbitrary_weights_original_denominator(self):
         # At x=0, gradients [1,1,-1.5], raw mean=1/6, negative only last.
         for backend in ("audit", "jvp"):
             for weight in (0., -1., -.5, .25, 1., 2.):
                 with self.subTest(backend=backend, weight=weight):
-                    method = HistoricalDPCO(.9, weight, backend)
+                    method = HistoricalDPCL(.9, weight, backend)
                     result = jax.jit(lambda p: method.compute_direction(
                         QuadraticTask(), p, scalar_batch()))({"x": jnp.zeros(1)})
                     np.testing.assert_allclose(result.direction["x"], [(2 - 1.5 * weight) / 3], atol=1e-6)
                     np.testing.assert_allclose(result.method_state.mean["x"], [.1 / 6], atol=1e-7)
                     self.assertEqual(int(result.method_state.updates), 1)
-                    self.assertEqual(int(result.metrics["dpco_negative_count"]), 1)
+                    self.assertEqual(int(result.metrics["dpcl_negative_count"]), 1)
                     self.assertEqual(int(result.model_state["calls"]), 1)
-                    self.assertAlmostEqual(float(result.metrics["dpco_reference_norm"]), 1/6, places=6)
+                    self.assertAlmostEqual(float(result.metrics["dpcl_reference_norm"]), 1/6, places=6)
 
     def test_history_uses_raw_not_edited_and_changes_selection(self):
         params = {"x": jnp.zeros(1)}
@@ -71,7 +71,7 @@ class HistoricalDPCOTests(unittest.TestCase):
         # First mean=+1/6 but flip direction=+7/6. Second raw mean=-.1.
         second = (jnp.array([[1.], [-.8]]), jnp.ones(2, bool), jnp.zeros(2, bool))
         for backend in ("audit", "jvp"):
-            method = HistoricalDPCO(.9, -1., backend)
+            method = HistoricalDPCL(.9, -1., backend)
             first = method.compute_direction(task, params, scalar_batch())
             result = method.compute_direction(task, params, second, first.model_state, first.method_state)
             expected_mean = .9 * (.1 / 6) + .1 * (-.1)
@@ -80,7 +80,7 @@ class HistoricalDPCOTests(unittest.TestCase):
             np.testing.assert_allclose(result.direction["x"], [.9], atol=1e-6)
             self.assertEqual(int(result.model_state["calls"]), 2)
             self.assertEqual(int(result.method_state.updates), 2)
-            current_only = HistoricalDPCO(0., -1., backend).compute_direction(task, params, second)
+            current_only = HistoricalDPCL(0., -1., backend).compute_direction(task, params, second)
             np.testing.assert_allclose(current_only.direction["x"], [-.9], atol=1e-6)
 
     def test_multidimensional_audit_jvp_match_explicit_numpy_recurrence(self):
@@ -98,31 +98,31 @@ class HistoricalDPCOTests(unittest.TestCase):
             weights = np.where(gradients @ reference < 0, -.4, 1.)
             expected = (gradients[mask] * weights[mask, None]).mean(0)
             for k, backend in enumerate(("audit", "jvp")):
-                out = HistoricalDPCO(.8, -.4, backend).compute_direction(
+                out = HistoricalDPCL(.8, -.4, backend).compute_direction(
                     QuadraticTask(), params, batch, method_state=states[k])
                 np.testing.assert_allclose(out.direction["x"], expected, atol=1e-6)
                 np.testing.assert_allclose(out.method_state.mean["x"], raw_mean, atol=1e-6)
                 states[k] = out.method_state
 
     def test_beta_zero_degenerates_to_legacy_batch_rules(self):
-        for weight, legacy in ((-1., "dpco"), (0., "dtv")):
+        for weight, legacy in ((-1., "dpcl"), (0., "dtv")):
             for backend in ("audit", "jvp"):
                 args = (QuadraticTask(), {"x": jnp.array([.1])}, scalar_batch())
-                historical = HistoricalDPCO(0., weight, backend).compute_direction(*args)
+                historical = HistoricalDPCL(0., weight, backend).compute_direction(*args)
                 old = create_method(legacy, gradient_backend=backend).compute_direction(*args)
                 assert_tree(self, historical.direction, old.direction)
 
     def test_zero_reference_and_zero_align_are_retained(self):
         # Use exactly representable gradients [2,0], mean=1, previous EMA=-1.
         # A decimal 1/6 cancellation would test rounding rather than exact zero.
-        method = HistoricalDPCO(.5, 0.)
+        method = HistoricalDPCL(.5, 0.)
         state = ReferenceState({"x": jnp.array([-1.])}, jnp.array(1))
         batch = (jnp.array([[-2.], [0.]]), jnp.ones(2, bool), jnp.zeros(2, bool))
         result = method.compute_direction(QuadraticTask(), {"x": jnp.zeros(1)},
                                           batch, method_state=state)
         np.testing.assert_array_equal(result.direction["x"], [1.])
-        self.assertEqual(int(result.metrics["dpco_negative_count"]), 0)
-        self.assertEqual(float(result.metrics["dpco_reference_cosine"]), 0.)
+        self.assertEqual(int(result.metrics["dpcl_negative_count"]), 0)
+        self.assertEqual(float(result.metrics["dpcl_reference_cosine"]), 0.)
         # Nonzero reference [1,0], with one exactly orthogonal sample [0,1].
         batch = (jnp.array([[0., -1.], [-1., 0.]]), jnp.ones(2, bool), jnp.zeros(2, bool))
         state = ReferenceState({"x": jnp.array([1.5, -.5])}, jnp.array(1))
@@ -136,7 +136,7 @@ class HistoricalDPCOTests(unittest.TestCase):
         padded = classification_batch(jnp.array([[1.], [-2.], [jnp.nan]]),
             jnp.array([0, 0, 999]), jnp.array([True, True, False]))
         for backend in ("audit", "jvp"):
-            method = HistoricalDPCO(.9, 0., backend)
+            method = HistoricalDPCL(.9, 0., backend)
             a = method.compute_direction(task, params, short)
             b = method.compute_direction(task, params, padded)
             assert_tree(self, a.direction, b.direction)
@@ -153,25 +153,25 @@ class HistoricalDPCOTests(unittest.TestCase):
         expected = task.evaluate(params, batch, buffers).model_state
         results = []
         for backend in ("audit", "jvp"):
-            method = HistoricalDPCO(.9, -.5, backend)
+            method = HistoricalDPCL(.9, -.5, backend)
             result = jax.jit(lambda p, s: method.compute_direction(task, p, batch, s))(params, buffers)
             assert_tree(self, result.model_state, expected)
             results.append(result)
         assert_tree(self, results[0].direction, results[1].direction, atol=2e-6)
 
     def test_beta_close_to_one_still_has_finite_corrected_first_reference(self):
-        result = HistoricalDPCO(1 - 1e-12).compute_direction(
+        result = HistoricalDPCL(1 - 1e-12).compute_direction(
             QuadraticTask(), {"x": jnp.zeros(1)}, scalar_batch())
-        self.assertAlmostEqual(float(result.metrics["dpco_reference_norm"]), 1/6, places=6)
+        self.assertAlmostEqual(float(result.metrics["dpcl_reference_norm"]), 1/6, places=6)
 
     def test_invalid_parameters_and_state_fail_closed(self):
         for beta in (-.1, 1., float("nan"), True):
             with self.assertRaises(ValueError):
-                HistoricalDPCO(beta)
+                HistoricalDPCL(beta)
         for weight in (float("inf"), float("nan"), True):
             with self.assertRaises(ValueError):
-                HistoricalDPCO(negative_weight=weight)
-        method = HistoricalDPCO()
+                HistoricalDPCL(negative_weight=weight)
+        method = HistoricalDPCL()
         params = {"x": jnp.zeros(1)}
         for state in (None, ReferenceState(params, jnp.array(1.5)),
                       ReferenceState(params, jnp.array(2)),
@@ -203,7 +203,7 @@ class AdamAndRecoveryTests(unittest.TestCase):
                 updater.validate_state(state, params, t+1)
 
     def test_adam_moments_use_edited_direction_not_raw_gradient(self):
-        method = HistoricalDPCO(.9, -1.)
+        method = HistoricalDPCL(.9, -1.)
         updater = AdamUpdate(.01, .8, .95)
         params = {"x": jnp.zeros(1)}
         state = TrainState(params, method_state=method.initial_state(params), optimizer_state=updater.init(params))
@@ -213,7 +213,7 @@ class AdamAndRecoveryTests(unittest.TestCase):
         np.testing.assert_allclose(result.optimizer_state.nu["x"], [.05*(7/6)**2], atol=1e-7)
 
     def test_three_groups_and_weight_one_control_resume_exactly(self):
-        for method, weight in (("adam", -1.), ("dpco", 0.), ("dpco", -1.), ("dpco", 1.)):
+        for method, weight in (("adam", -1.), ("dpcl", 0.), ("dpcl", -1.), ("dpcl", 1.)):
             with self.subTest(method=method, weight=weight), TemporaryDirectory() as tmp:
                 c, trainer, source, evaluation, initial = components(tmp, weight, method)
                 runner = ExperimentRunner(c, trainer, source, evaluation, base_dir=ROOT,
@@ -222,17 +222,17 @@ class AdamAndRecoveryTests(unittest.TestCase):
                 # Compile warmup and initial validation must not consume history or data.
                 self.assertEqual(source.index, 4)
                 self.assertEqual(int(final.optimizer_state.count), 4)
-                if method == "dpco":
+                if method == "dpcl":
                     self.assertEqual(int(final.method_state.updates), 4)
-                    rows = read_rows(runner.paths.files / "dpco_steps.csv")
-                    self.assertEqual([int(row["dpco_reference_updates"]) for row in rows], [1, 2, 3, 4])
+                    rows = read_rows(runner.paths.files / "dpcl_steps.csv")
+                    self.assertEqual([int(row["dpcl_reference_updates"]) for row in rows], [1, 2, 3, 4])
                 _, _, source2, evaluation2, _ = components(tmp, weight, method)
                 resumed = ExperimentRunner(c, trainer, source2, evaluation2, base_dir=ROOT,
                     train_sample_count=5, metadata={}, console=False, run_name="test", resume=True)
                 final2 = resumed.run(initial, resume_slot="p50")
                 assert_tree(self, final, final2, exact=True)
-                if method == "dpco":
-                    self.assertEqual(len(read_rows(runner.paths.files / "dpco_steps.csv")), 4)
+                if method == "dpcl":
+                    self.assertEqual(len(read_rows(runner.paths.files / "dpcl_steps.csv")), 4)
 
     def test_weight_one_matches_plain_adam_whole_trajectory(self):
         with TemporaryDirectory() as tmp:
@@ -255,7 +255,7 @@ class AdamAndRecoveryTests(unittest.TestCase):
                 runner = ExperimentRunner(c, trainer, source, evaluation, base_dir=ROOT,
                     train_sample_count=5, metadata={}, console=False, run_name="test")
                 runner.run(initial)
-                before = (runner.paths.files / "dpco_steps.csv").read_bytes()
+                before = (runner.paths.files / "dpcl_steps.csv").read_bytes()
                 path = runner.paths.runs / runner.store.index["p50"]
                 saved = pickle.loads(path.read_bytes())
                 saved["train_state"] = saved["train_state"]._replace(**{field: None})
@@ -264,7 +264,7 @@ class AdamAndRecoveryTests(unittest.TestCase):
                     train_sample_count=5, metadata={}, console=False, run_name="test", resume=True)
                 with self.assertRaisesRegex(ValueError, "state/count"):
                     resumed.run(initial, resume_slot="p50")
-                self.assertEqual((runner.paths.files / "dpco_steps.csv").read_bytes(), before)
+                self.assertEqual((runner.paths.files / "dpcl_steps.csv").read_bytes(), before)
                 self.assertTrue(resumed.recorder.log_file.closed)
 
     def test_real_training_entry_constructs_three_groups_and_resumes(self):
@@ -279,7 +279,7 @@ class AdamAndRecoveryTests(unittest.TestCase):
         from tests.test_tpu_pipeline import fake_stream
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
-            for alias in ("adam", "dpco_filter", "dpco_flip"):
+            for alias in ("adam", "dpcl_filter", "dpcl_flip"):
                 c = resolve_config(PRESET, mode="smoke", method=alias, steps=2, batch_size=2,
                                    reference_beta=.85, adam_beta1=.8, adam_beta2=.95)
                 c = replace(c, data=replace(c.data, image_size=8),
@@ -311,17 +311,17 @@ class AdamAndRecoveryTests(unittest.TestCase):
                 AdamUpdate(.01, **kwargs)
 
 
-class DPCOConfigurationTests(unittest.TestCase):
+class DPCLConfigurationTests(unittest.TestCase):
     def test_plain_filter_flip_share_settings_and_have_distinct_names(self):
-        configs = [resolve_config(PRESET, mode="train", method=m) for m in ("adam", "dpco_filter", "dpco_flip")]
-        self.assertEqual([c.method.name for c in configs], ["adam", "dpco", "dpco"])
+        configs = [resolve_config(PRESET, mode="train", method=m) for m in ("adam", "dpcl_filter", "dpcl_flip")]
+        self.assertEqual([c.method.name for c in configs], ["adam", "dpcl", "dpcl"])
         self.assertEqual([c.method.negative_weight for c in configs[1:]], [0., -1.])
         self.assertEqual(len({make_run_name(c) for c in configs}), 3)
         for c in configs:
             self.assertEqual(c.training, configs[0].training)
             self.assertEqual(c.data, configs[0].data)
             self.assertEqual(c.training.optimizer, "adam")
-        custom = resolve_config(PRESET, mode="train", method="dpco", negative_weight=-.25, reference_beta=.95)
+        custom = resolve_config(PRESET, mode="train", method="dpcl", negative_weight=-.25, reference_beta=.95)
         self.assertEqual(custom.method.negative_weight, -.25)
         self.assertEqual(custom.reference.beta, .95)
 
@@ -334,14 +334,14 @@ def guarded(name, *args, **kwargs):
         raise AssertionError('accelerator imported during dry run')
     return original(name, *args, **kwargs)
 builtins.__import__ = guarded
-sys.argv = ['scripts/launch_tpu.py', '--config', 'configs/tpu/dpco/imagenet100_resnet50.toml',
- '--mode', 'train', '--methods', 'adam', 'dpco_filter', 'dpco_flip', '--dry-run',
+sys.argv = ['scripts/launch_tpu.py', '--config', 'configs/tpu/dpcl/imagenet100_resnet50.toml',
+ '--mode', 'train', '--methods', 'adam', 'dpcl_filter', 'dpcl_flip', '--dry-run',
  '--reference-beta', '.85', '--adam-beta1', '.88', '--adam-beta2', '.98', '--adam-epsilon', '1e-7']
 runpy.run_path('scripts/launch_tpu.py', run_name='__main__')
 '''
         plans = json.loads(subprocess.check_output([sys.executable, "-c", code], cwd=ROOT, text=True))
         self.assertEqual(len(plans), 3)
-        from src.training.launch import add_overrides, diagnostic_overrides, dpco_overrides
+        from src.training.launch import add_overrides, diagnostic_overrides, dpcl_overrides
         import argparse
         parser = argparse.ArgumentParser()
         add_overrides(parser)
@@ -350,23 +350,23 @@ runpy.run_path('scripts/launch_tpu.py', run_name='__main__')
             start = command.index("--seed")
             args = parser.parse_args(command[start:])
             child = resolve_config(PRESET, mode="train", seed=args.seed, method=args.method,
-                                   **dpco_overrides(args), **diagnostic_overrides(args))
+                                   **dpcl_overrides(args), **diagnostic_overrides(args))
             self.assertEqual(child.training.adam_beta1, .88)
             self.assertEqual(child.training.adam_beta2, .98)
             self.assertEqual(child.training.adam_epsilon, 1e-7)
             self.assertEqual(child.training.optimizer, plan["optimizer"])
-            if child.method.name == "dpco":
+            if child.method.name == "dpcl":
                 self.assertEqual(child.reference.beta, plan["reference_beta"])
                 self.assertEqual(child.method.negative_weight, plan["negative_weight"])
 
     def test_invalid_combinations_and_nonfinite_weights_are_rejected(self):
         for kwargs in ({"negative_weight": float("inf")}, {"reference_beta": 1.},
                        {"adam_beta2": 1.}, {"momentum": .9}, {"theorem_probes": True},
-                       {"diagnostics": True}, {"dpco_warmup_percent": 10.}):
+                       {"diagnostics": True}, {"dpcl_warmup_percent": 10.}):
             with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):
                 resolve_config(PRESET, mode="train", **kwargs)
         with self.assertRaisesRegex(ValueError, "conflicts"):
-            resolve_config(PRESET, mode="train", method="dpco_filter", negative_weight=-1.)
+            resolve_config(PRESET, mode="train", method="dpcl_filter", negative_weight=-1.)
 
 
 if __name__ == "__main__":

@@ -21,7 +21,7 @@ ASSETS = {
     "CIFAR-100_human_ordered.npy": ("https://raw.githubusercontent.com/UCSC-REAL/cifar-10-100n/49df7d8a69e355470c77c1c2f2424916325a394b/data/CIFAR-100_human_ordered.npy", "sha256", "603b16e5f88f77a0db27ffe41b62cf59ba438da2b8bd4a085d502ad72e2b3dbf"),
     "image_order_c100.npy": ("https://raw.githubusercontent.com/UCSC-REAL/cifar-10-100n/49df7d8a69e355470c77c1c2f2424916325a394b/image_order_c100.npy", "sha256", "423c3118865b4d912ff9082423b992e43fa94ef0f503c4180bd415f915eec018"),
 }
-FORMAT = "dpco-cifar100n-v1"
+FORMAT = "dpcl-cifar100n-v1"
 TRAIN_COUNT, TEST_COUNT = 50000, 10000
 
 

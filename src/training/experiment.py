@@ -58,8 +58,8 @@ class ExperimentRunner:
             from src.probes.tpu_mechanisms import SCHEMAS as MECHANISM_SCHEMAS
             schemas = {**SCHEMAS, **MECHANISM_SCHEMAS}
         if config.reference.name == "ema":
-            from src.training.recording import SCHEMAS, DPCO_SCHEMA
-            schemas = {**(SCHEMAS if schemas is None else schemas), "dpco_steps": DPCO_SCHEMA}
+            from src.training.recording import SCHEMAS, DPCL_SCHEMA
+            schemas = {**(SCHEMAS if schemas is None else schemas), "dpcl_steps": DPCL_SCHEMA}
         if callable(getattr(evaluation, "evaluate_groups", None)):
             from src.training.recording import SCHEMAS
             schemas = {**(SCHEMAS if schemas is None else schemas), "group_evaluation":
@@ -102,7 +102,7 @@ class ExperimentRunner:
             stored_config.setdefault("mechanism", json.loads(json.dumps(asdict(MechanismConfig()))))
             stored_config["method"].setdefault("policy_mode", "continuous")
             stored_config["method"].setdefault("alternating_first", "sgd")
-            stored_config["method"].setdefault("dpco_warmup_percent", 0.0)
+            stored_config["method"].setdefault("dpcl_warmup_percent", 0.0)
             stored_config["method"].setdefault("negative_weight", -1.0)
             stored_config["reference"].setdefault("beta", 0.9)
             for key in ("noise_type", "is_human", "noise_seed", "noise_percent", "download", "label_noise_percent"):
@@ -133,7 +133,7 @@ class ExperimentRunner:
     def _run(self, initial_state, *, resume_slot):
         c, recorder = self.config, self.recorder
         state, samples_seen, elapsed_offset = initial_state, 0, 0.
-        stateful_method = c.method.name == "dpco_policy" or c.method.dpco_warmup_percent > 0
+        stateful_method = c.method.name == "dpcl_policy" or c.method.dpcl_warmup_percent > 0
         if stateful_method and state.method_state is None:
             state = state._replace(method_state=self.trainer.method.initial_state())
         historical = c.reference.name == "ema"
@@ -149,7 +149,7 @@ class ExperimentRunner:
                 self.mechanism.restore(saved.get("mechanism_state"), step=int(saved["train_state"].step))
             state, samples_seen = saved["train_state"], saved["samples_seen"]
             if stateful_method:
-                from src.methods.dpco_policy import PolicyState
+                from src.methods.dpcl_policy import PolicyState
                 if (not isinstance(state.method_state, PolicyState)
                         or int(state.method_state.updates) != int(state.step)):
                     raise ValueError("Policy checkpoint phase does not match completed updates")
@@ -297,14 +297,14 @@ class ExperimentRunner:
                     policy_fields = {}
                     if stateful_method:
                         alpha = float(values["policy_alpha"])
-                        policy_fields = dict(policy_mode="warmup" if c.method.dpco_warmup_percent else c.method.policy_mode, policy_alpha=alpha,
-                            executed_method={0.: "sgd", .5: "half_dpco", 1.: "dpco"}[alpha])
+                        policy_fields = dict(policy_mode="warmup" if c.method.dpcl_warmup_percent else c.method.policy_mode, policy_alpha=alpha,
+                            executed_method={0.: "sgd", .5: "half_dpcl", 1.: "dpcl"}[alpha])
                         recorder.record("policy_steps", step=row_step, reference=c.reference.name, **policy_fields)
                     if historical:
-                        fields = {key: value for key, value in values.items() if key.startswith("dpco_")}
+                        fields = {key: value for key, value in values.items() if key.startswith("dpcl_")}
                         if not all(math.isfinite(float(value)) for value in fields.values()):
-                            raise FloatingPointError(f"Non-finite DPCO statistics at step {row_step}")
-                        recorder.record("dpco_steps", step=row_step,
+                            raise FloatingPointError(f"Non-finite DPCL statistics at step {row_step}")
+                        recorder.record("dpcl_steps", step=row_step,
                             valid_batch_size=values["valid_batch_size"], **fields)
                     if not values.get("state_finite", True):
                         raise FloatingPointError(f"Non-finite method/optimizer state at step {row_step}")
@@ -323,7 +323,7 @@ class ExperimentRunner:
                                 negative_count=values["theory_negative_count"], flip_count=values["theory_flip_count"],
                                 reference_valid=values["theory_reference_valid"], delta=delta, eta_delta=eta * delta,
                                 reference_projection_sgd=values["theory_reference_projection_sgd"],
-                                reference_projection_dpco=values["theory_reference_projection_dpco"])
+                                reference_projection_dpcl=values["theory_reference_projection_dpcl"])
                     cumulative["cumulative_eta"] += eta
                     cumulative["cumulative_eta_sq"] += eta ** 2
                     if c.probes.enabled and c.probes.theorem3:

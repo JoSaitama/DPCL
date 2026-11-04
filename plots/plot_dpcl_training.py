@@ -1,4 +1,4 @@
-"""Compare Adam or SGD with DPCO Flip/Filter offline, including repeated-seed evaluations."""
+"""Compare Adam or SGD with DPCL Flip/Filter offline, including repeated-seed evaluations."""
 
 import argparse
 from bisect import bisect_right
@@ -18,8 +18,8 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 STYLES = {
     "adam": {"label": "Adam", "color": "#1f77b4", "linestyle": "-"},
-    "flip": {"label": "DPCO Flip", "color": "#d62728", "linestyle": "-"},
-    "filter": {"label": "DPCO Filter", "color": "#ff7f0e", "linestyle": "--"},
+    "flip": {"label": "DPCL Flip", "color": "#d62728", "linestyle": "-"},
+    "filter": {"label": "DPCL Filter", "color": "#ff7f0e", "linestyle": "--"},
 }
 BASELINES = {"adam", "sgd"}
 
@@ -34,11 +34,12 @@ def comparison_styles(methods):
 
 
 def directory_identity(directory):
-    """Keep historical DPCO names without an explicit optimizer token usable."""
+    """Keep historical DPCL names without an explicit optimizer token usable."""
     match = re.search(r"(?:^|_)(adam|sgd)_(\d+)(?:_|$)", directory.name)
     if match:
         return match[1], int(match[2])
-    match = re.search(r"_dpco_ema_b[^_]+_w[^_]+_(\d+)(?:_|$)", directory.name)
+    # Old exports retain their original run names; never rewrite research data.
+    match = re.search(r"_(?:dpcl|dpco)_ema_b[^_]+_w[^_]+_(\d+)(?:_|$)", directory.name)
     return None, int(match[1]) if match else None
 
 
@@ -167,7 +168,7 @@ def load_metadata(method, directory, sources, *, optimizer=None):
             if method in BASELINES:
                 valid = valid and actual_optimizer == method and config["method"]["name"] == method
             else:
-                valid = (valid and config["method"]["name"] == "dpco"
+                valid = (valid and config["method"]["name"] in ("dpcl", "dpco")
                          and config["reference"]["name"] == "ema"
                          and config["method"].get("negative_weight", -1) == (0 if method == "filter" else -1))
             if not valid:
@@ -478,7 +479,7 @@ def main(argv=None):
         parser.error("clean-original plots require --time-axis wall; evaluation.csv records wall time")
     if not evaluation_mode and any(len(getattr(args, method + "_dir")) != 1 for method in styles):
         parser.error("Repeated directories require --plot-set clean-original; training mode keeps one run per method")
-    prefix = "dpco_clean_original_" if evaluation_mode else "dpco_training_"
+    prefix = "dpcl_clean_original_" if evaluation_mode else "dpcl_training_"
     name = args.output_name or prefix + datetime.now().astimezone().strftime("%Y%m%d_%H%M%S_%f")
     if not re.fullmatch(r"[A-Za-z0-9_.-]+", name) or name in (".", ".."):
         parser.error("output-name must be one safe directory name")
@@ -547,7 +548,7 @@ def main(argv=None):
         for path, expected in run.sources.items():
             if hashlib.sha256(path.read_bytes()).hexdigest() != expected:
                 raise RuntimeError(f"Input changed while plotting: {path}; output has no completed manifest")
-    manifest = {"format": "dpco-group-evaluation-plots-v1" if evaluation_mode else "dpco-training-plots-v1", "created_at": datetime.now().astimezone().isoformat(),
+    manifest = {"format": "dpcl-group-evaluation-plots-v1" if evaluation_mode else "dpcl-training-plots-v1", "created_at": datetime.now().astimezone().isoformat(),
         "script_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "python": sys.version, "matplotlib": matplotlib.__version__,
         "arguments": vars(args), "optimizer": optimizer, "styles": styles, "figure_inches": [5, 4.5], "axes_height_width_ratio": .9,

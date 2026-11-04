@@ -28,7 +28,7 @@ def run_sanity(config, steps):
     from src.training import TrainState, Trainer
     from src.training.results import ResultsPaths
     from src.training.updates import make_updater
-    from src.training.schedules import dpco_warmup_steps
+    from src.training.schedules import dpcl_warmup_steps
 
     def model_fn(params, images, state):
         return images @ params["w"] + params["b"], state
@@ -54,7 +54,7 @@ def run_sanity(config, steps):
     def expected_direction(params, batch, method_name, reference_name):
         gradients, errors, valid = analytic_batch(params, batch)
         weights = np.ones(len(valid), dtype=np.float32)
-        if method_name in ("dpco", "dtv"):
+        if method_name in ("dpcl", "dtv"):
             selected = errors if reference_name == "error" else valid
             if reference_name == "correct":
                 selected = valid & ~errors
@@ -97,28 +97,28 @@ def run_sanity(config, steps):
         assert_direction(reference.direction, {
             name: leaf[selected].mean(axis=0) for name, leaf in gradients.items()
         })
-        method = create_method("dpco", reference_name=reference_name)
+        method = create_method("dpcl", reference_name=reference_name)
         assert not method.exclude_self
         actual = method.compute_direction(task, params, batch).direction
-        assert_direction(actual, expected_direction(params, batch, "dpco", reference_name))
-    print("PASS: DPCO-E/DPCO-L/DPCO-R full references, raw alignment, flips, and valid-B aggregation")
+        assert_direction(actual, expected_direction(params, batch, "dpcl", reference_name))
+    print("PASS: DPCL-E/DPCL-L/DPCL-R full references, raw alignment, flips, and valid-B aggregation")
 
-    direction_e = create_method("dpco", reference_name="error").compute_direction(task, params, batch).direction
-    direction_l = create_method("dpco", reference_name="loss").compute_direction(task, params, batch).direction
+    direction_e = create_method("dpcl", reference_name="error").compute_direction(task, params, batch).direction
+    direction_l = create_method("dpcl", reference_name="loss").compute_direction(task, params, batch).direction
     if np.allclose(direction_e["w"], direction_l["w"]):
         raise AssertionError("The fixture must distinguish error and loss references")
 
     predictions = jnp.argmax(model_fn(params, jnp.where(valid[:, None], images, 0.), None)[0], axis=-1)
     all_correct = classification_batch(images, predictions, valid)
     all_wrong = classification_batch(images, (predictions + 1) % classes, valid)
-    error_method = create_method("dpco", reference_name="error")
+    error_method = create_method("dpcl", reference_name="error")
     assert_direction(
         error_method.compute_direction(task, params, all_correct).direction,
         create_method("sgd").compute_direction(task, params, all_correct).direction,
     )
     assert_direction(
         error_method.compute_direction(task, params, all_wrong).direction,
-        create_method("dpco", reference_name="loss").compute_direction(task, params, all_wrong).direction,
+        create_method("dpcl", reference_name="loss").compute_direction(task, params, all_wrong).direction,
     )
     np.testing.assert_array_equal(
         error_method.weights(jnp.array([-1., 0., 1.]), jnp.array(True), jnp.ones(3, dtype=bool)),
@@ -128,21 +128,21 @@ def run_sanity(config, steps):
 
     method = create_method(config.method.name, reference_name=config.reference.name,
                            policy_mode=config.method.policy_mode, alternating_first=config.method.alternating_first,
-                           warmup_steps=dpco_warmup_steps(config))
+                           warmup_steps=dpcl_warmup_steps(config))
     updater = make_updater(config.training)
     trainer = Trainer(task, method, updater)
     compiled_step = jax.jit(trainer.step)
     state = TrainState(params, optimizer_state=updater.init(params))
-    if config.method.name == "dpco_policy" or config.method.dpco_warmup_percent:
+    if config.method.name == "dpcl_policy" or config.method.dpcl_warmup_percent:
         state = state._replace(method_state=method.initial_state())
     velocity = {name: np.zeros_like(value) for name, value in params.items()}
     for step in range(steps):
         effective = config.method.name
-        if config.method.dpco_warmup_percent:
-            effective = "sgd" if step < method.warmup_steps else "dpco"
-        if effective == "dpco_policy":
-            effective = {"continuous": "dpco", "half": "dtv",
-                         "alternating": "dpco" if (step + int(config.method.alternating_first == "dpco")) % 2
+        if config.method.dpcl_warmup_percent:
+            effective = "sgd" if step < method.warmup_steps else "dpcl"
+        if effective == "dpcl_policy":
+            effective = {"continuous": "dpcl", "half": "dtv",
+                         "alternating": "dpcl" if (step + int(config.method.alternating_first == "dpcl")) % 2
                          else "sgd"}[config.method.policy_mode]
         direction = expected_direction(state.params, batch, effective, config.reference.name)
         direction = {name: direction[name] + (
@@ -172,7 +172,7 @@ def run_sanity(config, steps):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", default="configs/imagenet100_resnet50_dpco_e.toml",
+    parser.add_argument("--config", default="configs/imagenet100_resnet50_dpcl_e.toml",
                         help="Configuration path, relative to the repository root unless absolute")
     parser.add_argument("--steps", type=int, default=3,
                         help="Number of synthetic compiled updates; must be positive")
@@ -183,8 +183,8 @@ def main():
     if not config_path.is_absolute():
         config_path = ROOT / config_path
     config = load_config(config_path)
-    if config.method.name not in ("sgd", "dpco"):
-        parser.error("This sanity check covers full-reference dpco and standard sgd only")
+    if config.method.name not in ("sgd", "dpcl"):
+        parser.error("This sanity check covers full-reference dpcl and standard sgd only")
     run_sanity(config, args.steps)
 
 

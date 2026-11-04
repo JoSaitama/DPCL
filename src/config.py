@@ -8,13 +8,14 @@ import tomllib
 from src.probes.mechanism_config import MechanismConfig
 
 
-METHODS = ("sgd", "adam", "dpco", "dpco_loo", "dtv", "dtv_loo", "random_flip", "dpco_policy")
+METHODS = ("sgd", "adam", "dpcl", "dpcl_loo", "dtv", "dtv_loo", "random_flip", "dpcl_policy")
 REFERENCES = ("loss", "error", "correct", "ema")
-DATASET_CLASSES = {"imagenet100": 100, "imagenet1k": 1000, "inaturalist2021": 10000, "cifar100n": 100, "mnist": 10, "cnwl": 100}
+DATASET_CLASSES = {"imagenet100": 100, "imagenet1k": 1000, "inaturalist2021": 10000, "cifar100n": 100, "mnist": 10, "digits": 10, "cnwl": 100}
 IMAGENET_MODELS = ("resnet50", "resnet101")
 CIFAR_MODELS = ("cifar_resnet18", "cifar_resnet34", "cifar_resnet50")
 MNIST_MODELS = ("mnist_cnn", "mnist_mlp")
-MODELS = (*IMAGENET_MODELS, *CIFAR_MODELS, *MNIST_MODELS)
+DIGITS_MODEL = "digits_mlp"
+MODELS = (*IMAGENET_MODELS, *CIFAR_MODELS, *MNIST_MODELS, DIGITS_MODEL)
 INATURALIST_PREPARED_DIR = "../data/inaturalist2021_full_t140000_v20000_s42"
 
 
@@ -33,7 +34,7 @@ class DataConfig:
     noise_seed: int = 0
     noise_percent: float | None = None
     download: bool = False
-    # MNIST generator control; noise_percent remains an actual-rate assertion.
+    # MNIST/Digits generator control; noise_percent remains an actual-rate assertion.
     label_noise_percent: float = 0.0
     # CNWL official Red split selector, NOT a label-noise generator.
     cnwl_noise_percent: int = 20
@@ -54,7 +55,7 @@ class MethodConfig:
     flip_probability: float = 0.25
     policy_mode: str = "continuous"
     alternating_first: str = "sgd"
-    dpco_warmup_percent: float = 0.0
+    dpcl_warmup_percent: float = 0.0
     negative_weight: float = -1.0
 
 
@@ -167,21 +168,21 @@ class RunConfig:
             raise ValueError(f"Unknown method: {self.method.name}")
         if self.method.policy_mode not in ("continuous", "alternating", "half"):
             raise ValueError("policy_mode must be continuous, alternating or half")
-        if self.method.name != "dpco_policy" and self.method.policy_mode != "continuous":
-            raise ValueError("Nondefault policy_mode requires method=dpco_policy")
-        if self.method.alternating_first not in ("sgd", "dpco"):
-            raise ValueError("alternating_first must be sgd or dpco")
+        if self.method.name != "dpcl_policy" and self.method.policy_mode != "continuous":
+            raise ValueError("Nondefault policy_mode requires method=dpcl_policy")
+        if self.method.alternating_first not in ("sgd", "dpcl"):
+            raise ValueError("alternating_first must be sgd or dpcl")
         if self.method.alternating_first != "sgd" and not (
-                self.method.name == "dpco_policy" and self.method.policy_mode == "alternating"):
-            raise ValueError("A nondefault alternating_first requires the alternating DPCO policy")
-        percent = self.method.dpco_warmup_percent
+                self.method.name == "dpcl_policy" and self.method.policy_mode == "alternating"):
+            raise ValueError("A nondefault alternating_first requires the alternating DPCL policy")
+        percent = self.method.dpcl_warmup_percent
         if isinstance(percent, bool) or not math.isfinite(percent) or not 0 <= percent <= 100:
-            raise ValueError("dpco_warmup_percent must be finite and in [0, 100]")
-        if percent and not (self.method.name == "dpco" or (
-                self.method.name == "dpco_policy" and self.method.policy_mode == "continuous")):
-            raise ValueError("DPCO warmup supports original dpco and continuous DPCO only")
+            raise ValueError("dpcl_warmup_percent must be finite and in [0, 100]")
+        if percent and not (self.method.name == "dpcl" or (
+                self.method.name == "dpcl_policy" and self.method.policy_mode == "continuous")):
+            raise ValueError("DPCL warmup supports original dpcl and continuous DPCL only")
         if percent and self.probes.enabled:
-            raise ValueError("DPCO warmup requires legacy theorem probes off; use diagnostics/mechanisms for actual-phase checks")
+            raise ValueError("DPCL warmup requires legacy theorem probes off; use diagnostics/mechanisms for actual-phase checks")
         if self.reference.name not in REFERENCES:
             raise ValueError(f"Unknown reference: {self.reference.name}")
         if (isinstance(self.reference.beta, bool) or not math.isfinite(self.reference.beta)
@@ -190,10 +191,10 @@ class RunConfig:
         if (isinstance(self.method.negative_weight, bool) or not math.isfinite(self.method.negative_weight)):
             raise ValueError("negative_weight must be a finite number")
         if self.reference.name == "ema" and (
-                self.method.name != "dpco" or self.method.policy_mode != "continuous" or percent):
-            raise ValueError("EMA reference requires continuous dpco without method warmup")
+                self.method.name != "dpcl" or self.method.policy_mode != "continuous" or percent):
+            raise ValueError("EMA reference requires continuous dpcl without method warmup")
         if self.method.negative_weight != -1 and self.reference.name != "ema":
-            raise ValueError("negative_weight requires dpco with EMA reference")
+            raise ValueError("negative_weight requires dpcl with EMA reference")
         if self.training.optimizer not in ("sgd", "adam"):
             raise ValueError("optimizer must be sgd or adam")
         if self.method.name == "adam" and self.training.optimizer != "adam":
@@ -210,8 +211,8 @@ class RunConfig:
                 self.probes.enabled or self.diagnostics.enabled or self.mechanism.enabled):
             raise ValueError("Adam/EMA runs require legacy theorem/diagnostic/mechanism observers off")
         if self.reference.name == "correct" and (
-                self.method.name != "dpco" or self.method.dpco_warmup_percent != 0):
-            raise ValueError("Correct reference currently supports continuous dpco_r only, without method warmup")
+                self.method.name != "dpcl" or self.method.dpcl_warmup_percent != 0):
+            raise ValueError("Correct reference currently supports continuous dpcl_r only, without method warmup")
         if not 0 <= self.method.flip_probability <= 1:
             raise ValueError("flip_probability must be in [0, 1]")
         classes = DATASET_CLASSES
@@ -234,8 +235,8 @@ class RunConfig:
         if (isinstance(generated_noise, bool) or not math.isfinite(generated_noise)
                 or not 0 <= generated_noise <= 100):
             raise ValueError("label_noise_percent must be finite and in [0, 100]")
-        if self.data.name != "mnist" and generated_noise != 0:
-            raise ValueError("label_noise_percent is a MNIST-only generator control")
+        if self.data.name not in ("mnist", "digits") and generated_noise != 0:
+            raise ValueError("label_noise_percent requires MNIST or Digits")
         if self.data.name != "cnwl" and self.data.cnwl_noise_percent != 20:
             raise ValueError("cnwl_noise_percent requires dataset=cnwl")
         cifar_models = CIFAR_MODELS
@@ -278,6 +279,15 @@ class RunConfig:
                 raise ValueError("MNIST requires image_size=28 and a supported classification model")
             if self.probes.enabled or self.diagnostics.enabled or self.mechanism.enabled:
                 raise ValueError("MNIST uses grouped evaluation; legacy observers must be off")
+        elif self.data.name == "digits":
+            if self.data.noise_type != "symmetric" or self.data.is_human:
+                raise ValueError("Digits requires noise_type=symmetric and is_human=false")
+            if self.data.mode != ("noisy" if generated_noise > 0 else "clean"):
+                raise ValueError("Digits data.mode must match label_noise_percent (0=clean)")
+            if self.data.image_size != 8 or self.model.name != DIGITS_MODEL:
+                raise ValueError("Digits requires image_size=8 and model=digits_mlp")
+            if self.probes.enabled or self.diagnostics.enabled or self.mechanism.enabled:
+                raise ValueError("Digits uses grouped evaluation; legacy observers must be off")
         elif self.data.noise_manifest is not None:
             if self.data.noise_type != "clip_idn" or self.data.is_human or self.data.mode != "noisy":
                 raise ValueError("ImageNet noise_manifest requires noise_type=clip_idn, is_human=false, mode=noisy")
@@ -294,6 +304,8 @@ class RunConfig:
             raise ValueError(f"Unsupported model: {self.model.name}")
         if self.model.name in MNIST_MODELS and self.data.name != "mnist":
             raise ValueError("mnist_cnn/mnist_mlp require dataset=mnist")
+        if self.model.name == DIGITS_MODEL and self.data.name != "digits":
+            raise ValueError("digits_mlp requires dataset=digits")
         if self.model.initialization != "random":
             raise ValueError("The current optimizer comparison uses random initialization, not pretrained weights")
         if self.model.precision not in ("float32", "bfloat16"):
@@ -360,8 +372,8 @@ class RunConfig:
         if not self.probes.lr_scales or any(not math.isfinite(s) or s <= 0
                                             for s in self.probes.lr_scales):
             raise ValueError("Probe learning-rate scales must be positive and finite")
-        if self.probes.enabled and self.method.name != "dpco":
-            raise ValueError("Common-reference theorem probes currently require full dpco")
+        if self.probes.enabled and self.method.name != "dpcl":
+            raise ValueError("Common-reference theorem probes currently require full dpcl")
         d = self.diagnostics
         self.mechanism.validate(self.training, self.method)
         for flag in (d.enabled, d.update_check, d.paired_loss, d.transfer):
@@ -379,8 +391,8 @@ class RunConfig:
         if d.enabled:
             if not (d.update_check or d.paired_loss or d.transfer):
                 raise ValueError("Enable at least one diagnostic check")
-            if self.method.name not in ("sgd", "dpco", "dpco_policy"):
-                raise ValueError("Real-update diagnostics cover SGD and full common-reference DPCO only")
+            if self.method.name not in ("sgd", "dpcl", "dpcl_policy"):
+                raise ValueError("Real-update diagnostics cover SGD and full common-reference DPCL only")
             if self.training.momentum != 0 or self.training.l2_coefficient != 0:
                 raise ValueError("Real-update diagnostics require momentum=0 and l2_coefficient=0")
         if not self.data.mode or any(c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-." for c in self.data.mode):

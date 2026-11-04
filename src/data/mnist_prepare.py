@@ -20,7 +20,7 @@ ASSETS = {name: (BASE_URL + name, "md5", digest) for name, digest in (
     ("train-labels-idx1-ubyte.gz", "d53e105ee54ea40749a09fcbcd1e9432"),
     ("t10k-images-idx3-ubyte.gz", "9fb629c4189551a2d022fa330f9573f3"),
     ("t10k-labels-idx1-ubyte.gz", "ec29112dd5afa0611ce80d1b7f02629c"))}
-FORMAT = "dpco-mnist-v1"
+FORMAT = "dpcl-mnist-v1"
 FILES = {"train_images.npy", "test_images.npy", "labels.npz"}
 
 

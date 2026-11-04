@@ -12,7 +12,7 @@ sys.path.insert(0, str(ROOT))
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--stage", choices=("all", "score", "generate", "verify", "audit"), default="all")
-    parser.add_argument("--config", default="configs/tpu/dpco/imagenet100_resnet50.toml")
+    parser.add_argument("--config", default="configs/tpu/dpcl/imagenet100_resnet50.toml")
     parser.add_argument("--data-dir", help="Existing clean ImageNet cache root; never downloads dataset images")
     parser.add_argument("--image-db", help="Explicit completed images.sqlite; otherwise derive from config/data-dir")
     parser.add_argument("--output-dir", required=True, help="Noise artifact directory, normally results/files/<name>")

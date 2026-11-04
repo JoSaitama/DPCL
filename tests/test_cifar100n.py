@@ -33,13 +33,13 @@ from src.tasks.classification import ClassificationTask
 from src.training import TrainState, Trainer
 from src.training.checkpoints import CheckpointStore
 from src.training.evaluation import cifar100n_evaluation
-from src.training.launch import add_overrides, cifar_overrides, dpco_overrides, resolve_config
+from src.training.launch import add_overrides, cifar_overrides, dpcl_overrides, resolve_config
 from src.training.experiment import ExperimentRunner
 from src.training.results import make_run_name
 from tests.test_observation import ROOT, read_rows
-from tests.test_dpco_history import assert_tree
+from tests.test_dpcl_history import assert_tree
 
-PRESET = ROOT / "configs/tpu/cifar100n/dpco_adam.toml"
+PRESET = ROOT / "configs/tpu/cifar100n/dpcl_adam.toml"
 
 
 def fixture(root, *, same=False):
@@ -52,7 +52,7 @@ def fixture(root, *, same=False):
         {"dataset": "synthetic_fixture_not_official", "official_revision": "fixture"})
 
 
-def config(root, *, method="dpco_flip", noise_type="noisy100", seed=42):
+def config(root, *, method="dpcl_flip", noise_type="noisy100", seed=42):
     c = resolve_config(PRESET, mode="smoke", method=method, steps=2, batch_size=2,
         data_dir=str(Path(root) / "data"), noise_type=noise_type,
         noise_percent=37.5 if noise_type == "noisy100" else 0., seed=seed,
@@ -324,7 +324,7 @@ class CIFARIntegrationTests(unittest.TestCase):
         from scripts.train_classification import run
         with TemporaryDirectory() as tmp:
             fixture(Path(tmp) / "data")
-            for method in ("adam", "dpco_filter", "dpco_flip"):
+            for method in ("adam", "dpcl_filter", "dpcl_flip"):
                 c = config(tmp, method=method)
                 args = SimpleNamespace(mode="smoke", run_name=method, resume=False,
                                        reserved=False, resume_slot="latest")
@@ -373,7 +373,7 @@ class CIFARIntegrationTests(unittest.TestCase):
         synthetic = resolve_config(PRESET, mode="train", is_human=False)
         self.assertFalse(synthetic.data.is_human)
         self.assertIsNone(synthetic.data.noise_percent)
-        old = ROOT / "configs/tpu/dpco/imagenet100_resnet50.toml"
+        old = ROOT / "configs/tpu/dpcl/imagenet100_resnet50.toml"
         switched = resolve_config(old, mode="train", dataset="cifar100n")
         self.assertEqual(switched.data.image_size, 32)
         self.assertEqual(switched.model.name, "cifar_resnet34")
@@ -388,7 +388,7 @@ class CIFARIntegrationTests(unittest.TestCase):
                 resolve_config(PRESET, mode="train", **kwargs)
 
     def test_shell_dry_run_parent_child_options_and_no_accelerator_import(self):
-        env = {**os.environ, "DPCO_PYTHON": sys.executable}
+        env = {**os.environ, "DPCL_PYTHON": sys.executable}
         output = subprocess.check_output([str(ROOT/"run_cifar100n_suite.sh"), "--dry-run", "--noise-type", "clean100"],
                                          cwd="/private/tmp", env=env, text=True)
         plans = json.loads(output)
@@ -402,7 +402,7 @@ class CIFARIntegrationTests(unittest.TestCase):
             command = plan["command"]
             args = parser.parse_args(command[command.index("--seed"):])
             child = resolve_config(PRESET, mode="train", method=args.method, seed=args.seed,
-                                   **cifar_overrides(args), **dpco_overrides(args))
+                                   **cifar_overrides(args), **dpcl_overrides(args))
             self.assertEqual(child.data.noise_percent, 0.)
             self.assertEqual(child.training.optimizer, "adam")
         code = '''import builtins, runpy, sys
@@ -412,7 +412,7 @@ class CIFARIntegrationTests(unittest.TestCase):
 +        raise AssertionError(name)
 +    return original(name,*a,**kw)
 +builtins.__import__=guarded
-+sys.argv=['scripts/launch_tpu.py','--config','configs/tpu/cifar100n/dpco_adam.toml','--dry-run']
++sys.argv=['scripts/launch_tpu.py','--config','configs/tpu/cifar100n/dpcl_adam.toml','--dry-run']
 +runpy.run_path(sys.argv[0],run_name='__main__')
 +'''.replace('\n+','\n')
         json.loads(subprocess.check_output([sys.executable, "-c", code], cwd=ROOT, text=True))

@@ -1,4 +1,4 @@
-"""Optional SGD prefix followed by the unchanged full-reference DPCO method."""
+"""Optional SGD prefix followed by the unchanged full-reference DPCL method."""
 
 from dataclasses import dataclass
 
@@ -6,13 +6,13 @@ import jax
 import jax.numpy as jnp
 
 from src.methods.base import MethodResult
-from src.methods.dpco import DPCO
-from src.methods.dpco_policy import PolicyState
+from src.methods.dpcl import DPCL
+from src.methods.dpcl_policy import PolicyState
 from src.methods.sgd import SGD
 
 
 @dataclass(frozen=True)
-class DPCOWarmup:
+class DPCLWarmup:
     reference: object
     warmup_steps: int
     gradient_backend: str = "audit"
@@ -31,12 +31,12 @@ class DPCOWarmup:
                           method_state=None, rng_key=None):
         state = self.initial_state() if method_state is None else method_state
         if not isinstance(state, PolicyState):
-            raise ValueError("DPCO warmup requires its checkpointed PolicyState")
+            raise ValueError("DPCL warmup requires its checkpointed PolicyState")
         alpha = self.alpha(state)
         # Only the selected branch executes. SGD-prefix updates do not perform
         # reference construction or alignment scoring at runtime.
         result = jax.lax.cond(alpha == 1.,
-            lambda: DPCO(self.reference, gradient_backend=self.gradient_backend).compute_direction(
+            lambda: DPCL(self.reference, gradient_backend=self.gradient_backend).compute_direction(
                 task, params, batch, model_state, None, rng_key),
             lambda: SGD().compute_direction(task, params, batch, model_state, None, rng_key))
         return MethodResult(result.direction, result.model_state, PolicyState(state.updates + 1),

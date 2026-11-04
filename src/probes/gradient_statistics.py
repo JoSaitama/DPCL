@@ -14,7 +14,7 @@ class ProbeStatistics(NamedTuple):
     scores: Any
     reference: Any
     sgd: Any
-    dpco: Any
+    dpcl: Any
     sample_energy: Any
 
 

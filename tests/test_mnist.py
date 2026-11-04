@@ -29,13 +29,13 @@ from src.tasks.classification import ClassificationTask
 from src.training import TrainState
 from src.training.checkpoints import CheckpointStore
 from src.training.evaluation import noisy_classification_evaluation
-from src.training.launch import add_overrides, cifar_overrides, dpco_overrides, resolve_config
+from src.training.launch import add_overrides, cifar_overrides, dpcl_overrides, resolve_config
 from src.training.results import make_run_name
-from tests.test_dpco_history import assert_tree
+from tests.test_dpcl_history import assert_tree
 from tests.test_observation import ROOT, read_rows
 
-PRESET = ROOT / "configs/tpu/mnist/dpco_adam.toml"
-CIFAR_PRESET = ROOT / "configs/tpu/cifar100n/dpco_adam.toml"
+PRESET = ROOT / "configs/tpu/mnist/dpcl_adam.toml"
+CIFAR_PRESET = ROOT / "configs/tpu/cifar100n/dpcl_adam.toml"
 
 
 def fixture(root):
@@ -158,7 +158,7 @@ class MNISTIntegrationTests(unittest.TestCase):
         from scripts.train_classification import run
         with TemporaryDirectory() as tmp:
             fixture(Path(tmp) / "data")
-            for method in ("adam", "dpco_filter", "dpco_flip"):
+            for method in ("adam", "dpcl_filter", "dpcl_flip"):
                 c = resolve_config(PRESET, mode="smoke", steps=2, batch_size=2, method=method,
                     data_dir=str(Path(tmp) / "data"), eval_every_steps=1, checkpoint_every_steps=1)
                 c = replace(c, results=ResultsConfig(str(Path(tmp) / "results")))
@@ -194,7 +194,7 @@ class MNISTIntegrationTests(unittest.TestCase):
             self.assertEqual(state2, {})
         output = subprocess.check_output([sys.executable, "scripts/run_suite.py", "--config", str(PRESET),
             "--dry-run", "--model", "mnist_mlp", "--label-noise-percent", "40", "--noise-seed", "7",
-            "--methods", "adam", "dpco_filter", "dpco_flip"], cwd=ROOT, text=True)
+            "--methods", "adam", "dpcl_filter", "dpcl_flip"], cwd=ROOT, text=True)
         plans = json.loads(output)
         # Verify generated options are accepted/resolved by the child's shared parser.
         import argparse
@@ -209,7 +209,7 @@ class MNISTIntegrationTests(unittest.TestCase):
             self.assertEqual(command[command.index("--noise-seed") + 1], "7")
             args = parser.parse_args(command[command.index("--seed"):])
             child = resolve_config(PRESET, mode="train", seed=args.seed, method=args.method, model=args.model,
-                                   **cifar_overrides(args), **dpco_overrides(args))
+                                   **cifar_overrides(args), **dpcl_overrides(args))
             self.assertEqual(child.model.name, p["model"])
             self.assertEqual(child.data.label_noise_percent, p["label_noise_percent"])
             self.assertEqual(child.reference.name, p["reference"])

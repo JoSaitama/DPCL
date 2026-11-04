@@ -17,8 +17,8 @@ def main() -> None:
     parser.add_argument("--model", choices=MODELS)
     parser.add_argument("--flip-probability", type=float)
     parser.add_argument("--policy-mode", choices=("continuous", "alternating", "half"))
-    parser.add_argument("--alternating-first", choices=("sgd", "dpco"))
-    parser.add_argument("--dpco-warmup-percent", type=float)
+    parser.add_argument("--alternating-first", choices=("sgd", "dpcl"))
+    parser.add_argument("--dpcl-warmup-percent", type=float)
     parser.add_argument("--negative-weight", type=float)
     parser.add_argument("--reference-beta", type=float)
     parser.add_argument("--optimizer", choices=("sgd", "adam"))
@@ -51,8 +51,8 @@ def main() -> None:
         config = replace(config, method=replace(config.method, policy_mode=args.policy_mode))
     if args.alternating_first is not None:
         config = replace(config, method=replace(config.method, alternating_first=args.alternating_first))
-    if args.dpco_warmup_percent is not None:
-        config = replace(config, method=replace(config.method, dpco_warmup_percent=args.dpco_warmup_percent))
+    if args.dpcl_warmup_percent is not None:
+        config = replace(config, method=replace(config.method, dpcl_warmup_percent=args.dpcl_warmup_percent))
     if args.flip_probability is not None:
         config = replace(config, method=replace(config.method,
                                               flip_probability=args.flip_probability))
@@ -72,7 +72,7 @@ def main() -> None:
         noise["mode"] = "clean" if args.noise_type == "clean100" else "noisy"
     if config.data.name == "cifar100n" and args.noise_percent is None and any(v is not None for v in (args.noise_type, args.is_human, args.noise_seed)):
         noise["noise_percent"] = 0. if noise.get("noise_type", config.data.noise_type) == "clean100" else None
-    if config.data.name == "mnist" and args.label_noise_percent is not None:
+    if config.data.name in ("mnist", "digits") and args.label_noise_percent is not None:
         noise["mode"] = "noisy" if args.label_noise_percent > 0 else "clean"
         if args.noise_percent is None:
             noise["noise_percent"] = None

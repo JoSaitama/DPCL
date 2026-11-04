@@ -1,42 +1,44 @@
-# Exploratory mechanism preset, not the professor's unknown MNIST recipe.
+# CNWL official Red Mini-ImageNet, natural web noise, no CARE long-tail sampling.
+# Training parameters are a DPCL comparison preset, not a MentorMix reproduction.
 seed = 42
 global_batch_size = 128
 
 [data]
-name = "mnist"
-num_classes = 10
-image_size = 28
+name = "cnwl"
+num_classes = 100
+image_size = 84
 mode = "noisy"
-prepared_dir = "../data/mnist"
-noise_type = "symmetric"
-is_human = false
+prepared_dir = "../data/cnwl"
+noise_type = "red"
+is_human = true
 noise_seed = 0
-label_noise_percent = 20.0
+cnwl_noise_percent = 20
 download = false
 
 [model]
-name = "mnist_cnn"
+name = "resnet50"
 initialization = "random"
 precision = "float32"
 
 [method]
-name = "dpco"
+name = "dpcl"
 negative_weight = -1.0
 
 [reference]
 name = "ema"
-beta = 0.99
+beta = 0.9
 
 [training]
 optimizer = "adam"
-learning_rate = 0.001
-# 20 drop-last data traversals: floor(60000/128) * 20.
-total_steps = 9360
+learning_rate = 0.0003
+# Nominal 200 drop-last traversals of the 50,000-image Red20 split.
+total_steps = 78000
 lr_schedule = "cosine"
 min_learning_rate = 0.000001
 adam_beta1 = 0.9
 adam_beta2 = 0.999
 adam_epsilon = 1e-8
+l2_coefficient = 0.0
 
 [execution]
 visible_chips = "0,1,2,3"
@@ -56,10 +58,11 @@ timing_window_steps = 50
 
 [evaluation]
 mode = "steps"
-interval = 468
+interval = 390
 
 [checkpoints]
-latest_every_steps = 2340
+enabled = true
+latest_every_steps = 1950
 at_epoch_end = false
 
 [probes]

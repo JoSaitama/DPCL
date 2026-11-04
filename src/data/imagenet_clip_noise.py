@@ -21,7 +21,7 @@ import numpy as np
 from PIL import Image
 
 
-FORMAT = "dpco_imagenet_clip_idn_v1"
+FORMAT = "dpcl_imagenet_clip_idn_v1"
 ALGORITHM = "margin_gumbel_weighted_without_replacement_v1"
 CLIP_COMMIT = "d05afc436d78f1c48dc0dbf8e5980a9d471f35f6"
 WEIGHT_SHA256 = "b8cca3fd41ae0c99ba7e8951adf17d267cdb84cd88be6f7c2e0eca1737a03836"

@@ -17,7 +17,7 @@ class ReferenceState(NamedTuple):
 
 
 @dataclass(frozen=True)
-class HistoricalDPCO:
+class HistoricalDPCL:
     beta: float = 0.9
     negative_weight: float = -1.0
     gradient_backend: str = "jvp"
@@ -39,12 +39,12 @@ class HistoricalDPCO:
         if (not isinstance(state, ReferenceState) or jnp.shape(state.updates) != ()
                 or not jnp.issubdtype(jnp.asarray(state.updates).dtype, jnp.integer)
                 or int(state.updates) < 0 or int(state.updates) != int(step)):
-            raise ValueError("DPCO reference state/count does not match completed updates")
+            raise ValueError("DPCL reference state/count does not match completed updates")
         if jax.tree_util.tree_structure(state.mean) != jax.tree_util.tree_structure(params):
-            raise ValueError("DPCO reference tree differs from parameters")
+            raise ValueError("DPCL reference tree differs from parameters")
         for mean, param in zip(jax.tree_util.tree_leaves(state.mean), jax.tree_util.tree_leaves(params)):
             if mean.shape != param.shape or not bool(jnp.all(jnp.isfinite(mean))):
-                raise ValueError("DPCO reference has invalid shape or non-finite values")
+                raise ValueError("DPCL reference has invalid shape or non-finite values")
 
     def compute_direction(self, task, params, batch, model_state=None, method_state=None, rng_key=None):
         if method_state is None:
@@ -82,14 +82,14 @@ class HistoricalDPCO:
         count = jnp.sum(valid)
         ref_sq, raw_sq = tree_dot(reference, reference), tree_dot(raw, raw)
         norm_product = jnp.sqrt(ref_sq * raw_sq)
-        metrics.update(dpco_negative_count=jnp.sum(negative),
-            dpco_edited_count=jnp.sum(negative) * (self.negative_weight != 1),
-            dpco_negative_weight=jnp.asarray(self.negative_weight),
-            dpco_reference_updates=updates,
-            dpco_reference_norm=jnp.sqrt(ref_sq), dpco_raw_norm=jnp.sqrt(raw_sq),
-            dpco_direction_norm=jnp.sqrt(tree_dot(direction, direction)),
-            dpco_reference_cosine=jnp.where(norm_product > 0,
+        metrics.update(dpcl_negative_count=jnp.sum(negative),
+            dpcl_edited_count=jnp.sum(negative) * (self.negative_weight != 1),
+            dpcl_negative_weight=jnp.asarray(self.negative_weight),
+            dpcl_reference_updates=updates,
+            dpcl_reference_norm=jnp.sqrt(ref_sq), dpcl_raw_norm=jnp.sqrt(raw_sq),
+            dpcl_direction_norm=jnp.sqrt(tree_dot(direction, direction)),
+            dpcl_reference_cosine=jnp.where(norm_product > 0,
                 tree_dot(reference, raw) / jnp.where(norm_product > 0, norm_product, 1.), 0.),
-            dpco_reference_gain=jnp.sum(jnp.where(valid, (weights - 1) * scores, 0.)) / count)
+            dpcl_reference_gain=jnp.sum(jnp.where(valid, (weights - 1) * scores, 0.)) / count)
         from src.methods.base import MethodResult
         return MethodResult(direction, next_model_state, ReferenceState(mean, updates), metrics)

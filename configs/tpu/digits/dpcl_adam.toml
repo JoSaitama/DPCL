@@ -1,0 +1,46 @@
+# Exploratory sklearn Digits recipe; the professor's exact split and budget are unconfirmed.
+seed = 42
+global_batch_size = 64
+
+[data]
+name = "digits"
+num_classes = 10
+image_size = 8
+mode = "noisy"
+prepared_dir = "../data/digits"
+noise_type = "symmetric"
+is_human = false
+noise_seed = 0
+label_noise_percent = 20.0
+download = true
+
+[model]
+name = "digits_mlp"
+precision = "float32"
+
+[method]
+name = "dpcl"
+negative_weight = -1.0
+
+[reference]
+name = "ema"
+beta = 0.5
+
+[training]
+optimizer = "adam"
+learning_rate = 0.001
+# 100 drop-last data traversals, floor(1437/64) = 22 updates each.
+total_steps = 2200
+
+[execution]
+gradient_backend = "jvp"
+
+[evaluation]
+mode = "steps"
+interval = 220
+
+[checkpoints]
+latest_every_steps = 220
+
+[probes]
+enabled = false

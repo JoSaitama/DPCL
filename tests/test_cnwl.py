@@ -33,12 +33,12 @@ from src.training import TrainState
 from src.tasks.classification import ClassificationTask
 from src.training.evaluation import cnwl_evaluation
 from src.training.checkpoints import CheckpointStore
-from src.training.launch import add_overrides, cifar_overrides, dpco_overrides, resolve_config
+from src.training.launch import add_overrides, cifar_overrides, dpcl_overrides, resolve_config
 from src.training.results import make_run_name
-from tests.test_dpco_history import assert_tree
+from tests.test_dpcl_history import assert_tree
 from tests.test_observation import ROOT, read_rows
 
-PRESET = ROOT / "configs/tpu/cnwl/dpco_adam.toml"
+PRESET = ROOT / "configs/tpu/cnwl/dpcl_adam.toml"
 
 
 def jpeg(value=50):
@@ -296,7 +296,7 @@ class CNWLIntegrationTests(unittest.TestCase):
     def test_suite_parent_child_and_model_noise_controls(self):
         output = subprocess.check_output([sys.executable, "scripts/run_suite.py", "--config", str(PRESET),
             "--dry-run", "--cnwl-noise-percent", "40", "--model", "cifar_resnet50",
-            "--methods", "adam", "dpco_filter", "dpco_flip"], cwd=ROOT, text=True)
+            "--methods", "adam", "dpcl_filter", "dpcl_flip"], cwd=ROOT, text=True)
         parser = argparse.ArgumentParser()
         add_overrides(parser)
         for plan in json.loads(output):
@@ -306,7 +306,7 @@ class CNWLIntegrationTests(unittest.TestCase):
             command = plan["command"]
             args = parser.parse_args(command[command.index("--seed"):])
             child = resolve_config(PRESET, mode="train", seed=args.seed, method=args.method, model=args.model,
-                                   **cifar_overrides(args), **dpco_overrides(args))
+                                   **cifar_overrides(args), **dpcl_overrides(args))
             self.assertEqual(child.data.cnwl_noise_percent, 40)
             self.assertEqual(child.model.name, "cifar_resnet50")
             self.assertEqual(child.method.negative_weight if child.reference.name == "ema" else None, plan["negative_weight"])
@@ -315,7 +315,7 @@ class CNWLIntegrationTests(unittest.TestCase):
         for dataset in ("mnist", "cifar100n", "imagenet100", "imagenet1k"):
             switched = resolve_config(PRESET, mode="train", dataset=dataset)
             self.assertNotIn("cnwl_noise_percent", switched.as_dict()["data"])
-        switched = resolve_config(ROOT / "configs/tpu/mnist/dpco_adam.toml", mode="train", dataset="cnwl")
+        switched = resolve_config(ROOT / "configs/tpu/mnist/dpcl_adam.toml", mode="train", dataset="cnwl")
         self.assertEqual((switched.data.image_size, switched.data.noise_type, switched.model.name), (84, "red", "resnet50"))
         for kwargs in ({"cnwl_noise_percent": 25}, {"noise_seed": 1}, {"is_human": False},
                        {"label_noise_percent": 20}, {"noise_type": "symmetric"}, {"theorem_probes": True}):
@@ -330,7 +330,7 @@ class CNWLIntegrationTests(unittest.TestCase):
                 "src.models.classification.create_model", side_effect=lambda name, classes, precision: TinyClassifier(classes)):
             fixture(Path(tmp) / "manual")
             cp.prepare(Path(tmp) / "data", manual_dir=Path(tmp) / "manual")
-            for method in ("adam", "dpco_filter", "dpco_flip"):
+            for method in ("adam", "dpcl_filter", "dpcl_flip"):
                 config = resolve_config(PRESET, mode="train", steps=2, batch_size=2, method=method,
                     data_dir=str(Path(tmp) / "data"), eval_every_steps=1, checkpoint_every_steps=1)
                 config = replace(config, results=ResultsConfig(str(Path(tmp) / "results")))

@@ -1,4 +1,4 @@
-# DPCO EMA + Adam pilot. Untuned; no training is launched by reading this file.
+# DPCL EMA + Adam pilot. Untuned; no training is launched by reading this file.
 seed = 42
 global_batch_size = 256
 
@@ -18,7 +18,7 @@ initialization = "random"
 precision = "float32"
 
 [method]
-name = "dpco"
+name = "dpcl"
 negative_weight = -1.0  # 0=filter; -1=flip; any finite scalar
 
 [reference]

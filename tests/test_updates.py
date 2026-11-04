@@ -47,8 +47,8 @@ class L2Tests(unittest.TestCase):
             np.testing.assert_allclose(a, b, atol=1e-7)
         self.assertEqual(int(output.optimizer_state["sentinel"]), 3)
 
-    def test_enabled_l2_is_applied_after_sgd_or_dpco_direction_construction(self):
-        for method, reference in (("sgd", "loss"), ("dpco", "loss"), ("dpco", "error")):
+    def test_enabled_l2_is_applied_after_sgd_or_dpcl_direction_construction(self):
+        for method, reference in (("sgd", "loss"), ("dpcl", "loss"), ("dpcl", "error")):
             with self.subTest(method=method, reference=reference), TemporaryDirectory() as tmp:
                 c = fixture_config(tmp)
                 c = replace(c, method=replace(c.method, name=method),
@@ -66,7 +66,7 @@ class L2Tests(unittest.TestCase):
                     np.testing.assert_array_equal(metrics[key], regularized_metrics[key])
 
     def test_invalid_coefficients_and_regularized_theorem_probes_are_rejected(self):
-        c = load_config(ROOT / "configs/tpu/imagenet100_resnet50_dpco_e.toml")
+        c = load_config(ROOT / "configs/tpu/imagenet100_resnet50_dpcl_e.toml")
         self.assertEqual(c.training.l2_coefficient, 0.)
         for value in (-.1, float("inf"), float("nan"), True):
             with self.subTest(value=value):

@@ -24,7 +24,7 @@ class IndependentDirections(NamedTuple):
     scores: object
     weights: object
     sgd: object
-    dpco: object
+    dpcl: object
     model_state: object
 
 
@@ -93,12 +93,12 @@ def _candidate(params, direction, eta):
 
 
 class TrainingDiagnostics:
-    """Observe one trajectory while pairing SGD/DPCO at each frozen state."""
+    """Observe one trajectory while pairing SGD/DPCL at each frozen state."""
 
     def __init__(self, task, method, config, *, reference_name, trajectory_method,
                  audit_batches=(), objective_mode="train_batch_bn; frozen_before_buffers"):
-        if reference_name not in ("loss", "error", "correct") or trajectory_method not in ("sgd", "dpco", "dpco_policy"):
-            raise ValueError("Diagnostics require a loss/error/correct reference and an SGD/DPCO trajectory")
+        if reference_name not in ("loss", "error", "correct") or trajectory_method not in ("sgd", "dpcl", "dpcl_policy"):
+            raise ValueError("Diagnostics require a loss/error/correct reference and an SGD/DPCL trajectory")
         if config.transfer and len(audit_batches) != config.audit_batches:
             raise ValueError("Transfer diagnostics require the configured fixed training audit bank")
         self.task, self.config = task, config
@@ -176,10 +176,10 @@ class TrainingDiagnostics:
                 "overlap_policy": "fixed bank, overlap counted, no target reselection or training exclusion",
                 "scope": "finite training-audit targets; not a population or convergence certificate",
                 "sample_energy": "not measured; no per-example energy loop"}
-        if self.trajectory_method == "dpco_policy" or self.warmup_steps:
+        if self.trajectory_method == "dpcl_policy" or self.warmup_steps:
             metadata.update(policy_mode=self.method.mode,
                 alternating_first=self.method.alternating_first,
-                policy_comparison="diagnostic_policy compares the active policy to SGD; legacy paired/transfer compare FULL DPCO to SGD",
+                policy_comparison="diagnostic_policy compares the active policy to SGD; legacy paired/transfer compare FULL DPCL to SGD",
                 candidate_policy="full pair uses actual endpoint only for alpha=0 or 1; policy pair uses actual endpoint at scale 1")
             if self.warmup_steps:
                 metadata["sgd_prefix_updates"] = self.warmup_steps
@@ -187,7 +187,7 @@ class TrainingDiagnostics:
 
     @staticmethod
     def _summarize(stats):
-        correction = _difference(stats.dpco, stats.sgd)
+        correction = _difference(stats.dpcl, stats.sgd)
         delta = tree_dot(stats.reference, correction)
         formula = jnp.sum(jnp.where(stats.valid, (stats.weights - 1.) * stats.scores, 0.)) / jnp.sum(stats.valid)
         return {"valid_batch_size": jnp.sum(stats.valid), "error_count": jnp.sum(stats.errors),
@@ -196,7 +196,7 @@ class TrainingDiagnostics:
                 "reference_delta": delta, "identity_residual": delta - formula,
                 "score_min_abs": jnp.min(jnp.where(stats.valid, jnp.abs(stats.scores), jnp.inf)),
                 "norm_sgd_sq": tree_dot(stats.sgd, stats.sgd),
-                "norm_dpco_sq": tree_dot(stats.dpco, stats.dpco)}
+                "norm_dpcl_sq": tree_dot(stats.dpcl, stats.dpcl)}
 
     @staticmethod
     def _check_update(before, after, replay, expected_direction, expected_state, eta):
@@ -220,8 +220,8 @@ class TrainingDiagnostics:
         if update_step != step + 1:
             raise ValueError("Diagnostics require exactly one actual completed update")
         alpha = None
-        if self.trajectory_method == "dpco_policy" or self.warmup_steps:
-            from src.methods.dpco_policy import PolicyState, policy_alpha
+        if self.trajectory_method == "dpcl_policy" or self.warmup_steps:
+            from src.methods.dpcl_policy import PolicyState, policy_alpha
             if (not isinstance(before.method_state, PolicyState)
                     or not isinstance(after.method_state, PolicyState)
                     or int(before.method_state.updates) != step
@@ -237,13 +237,13 @@ class TrainingDiagnostics:
                  "source_context_json": json.dumps(context, sort_keys=True)})]
         stats = self._independent(before.params, batch, before.model_state)
         summary = self._summary(stats)
-        correction = self._correction(stats.dpco, stats.sgd)
+        correction = self._correction(stats.dpcl, stats.sgd)
         common = {**base, "objective_mode": self.objective_mode, "learning_rate": learning_rate,
                   "reference_delta": summary["reference_delta"],
-                  "norm_sgd_sq": summary["norm_sgd_sq"], "norm_dpco_sq": summary["norm_dpco_sq"]}
+                  "norm_sgd_sq": summary["norm_sgd_sq"], "norm_dpcl_sq": summary["norm_dpcl_sq"]}
         if self.config.update_check:
             replay = self._replay(before.params, batch, before.model_state, before.method_state, rng_key)
-            expected = stats.dpco if self.trajectory_method == "dpco" else stats.sgd
+            expected = stats.dpcl if self.trajectory_method == "dpcl" else stats.sgd
             if alpha is not None:
                 expected = self._policy_direction(stats, alpha)
             errors = self._update_errors(before, after, replay, expected, stats.model_state, learning_rate)
@@ -300,11 +300,11 @@ class TrainingDiagnostics:
         if alpha == 0.:
             return stats.sgd
         if alpha == 1.:
-            return stats.dpco
-        return jax.tree_util.tree_map(lambda d, s: .5 * (d + s), stats.sgd, stats.dpco)
+            return stats.dpcl
+        return jax.tree_util.tree_map(lambda d, s: .5 * (d + s), stats.sgd, stats.dpcl)
 
     def _policy_row(self, before, after, batch, mask, stats, scale, learning_rate, initial, gain, alpha):
-        """Actual-policy evidence is separate from the full-DPCO counterfactual."""
+        """Actual-policy evidence is separate from the full-DPCL counterfactual."""
         eta = learning_rate * scale
         pd = self._candidate(before.params, stats.sgd, eta)
         pp = (after.params if scale == 1. else self._candidate(
@@ -322,13 +322,13 @@ class TrainingDiagnostics:
                     *, actual_alpha=None):
         eta = learning_rate * scale
         pd = self._candidate(before.params, stats.sgd, eta)
-        ps = self._candidate(before.params, stats.dpco, eta)
+        ps = self._candidate(before.params, stats.dpcl, eta)
         # The base-rate comparison includes the ORIGINAL compiled step's result.
         # If implementation differs from independent AD, H and its residual expose
         # that mismatch instead of silently testing two reconstructed updates.
         actual = scale == 1. and (actual_alpha is None or actual_alpha in (0., 1.))
         if actual:
-            if actual_alpha == 1. or (actual_alpha is None and self.trajectory_method == "dpco"):
+            if actual_alpha == 1. or (actual_alpha is None and self.trajectory_method == "dpcl"):
                 ps = after.params
             else:
                 pd = after.params
@@ -337,7 +337,7 @@ class TrainingDiagnostics:
         difference = js - jd
         ratio = difference / eta if eta > 0 else None
         return {"lr_scale": scale, "probe_lr": eta, "j_initial": initial,
-                "j_sgd": jd, "j_dpco": js, "difference": difference,
+                "j_sgd": jd, "j_dpcl": js, "difference": difference,
                 "difference_over_lr": ratio, "objective_gain": gain,
                 "first_order_residual": ratio + gain if eta > 0 else None,
                 "actual_update_in_pair": actual,

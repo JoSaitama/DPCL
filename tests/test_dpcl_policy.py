@@ -20,7 +20,7 @@ import numpy as np
 from src.config import DiagnosticConfig, MethodConfig, ProbeConfig, ResultsConfig
 from src.data.diagnostic_batches import TrainingAuditBatch
 from src.methods import create_method
-from src.methods.dpco_policy import PolicyState, policy_alpha
+from src.methods.dpcl_policy import PolicyState, policy_alpha
 from src.probes.training_diagnostics import TrainingDiagnostics
 from src.training import Trainer, TrainState
 from src.training.experiment import ExperimentRunner
@@ -35,7 +35,7 @@ from tests.test_training_diagnostics import AnalyticBatch, observe
 from src.references import create_reference
 
 
-class DPCOPolicyTests(unittest.TestCase):
+class DPCLPolicyTests(unittest.TestCase):
     def assert_tree_close(self, left, right, *, exact=False):
         self.assertEqual(jax.tree_util.tree_structure(left), jax.tree_util.tree_structure(right))
         for a, b in zip(jax.tree_util.tree_leaves(left), jax.tree_util.tree_leaves(right)):
@@ -45,7 +45,7 @@ class DPCOPolicyTests(unittest.TestCase):
                 np.testing.assert_allclose(a, b, rtol=3e-5, atol=3e-6)
 
     def method(self, mode, reference="loss", backend="jvp"):
-        return create_method("dpco_policy", reference_name=reference,
+        return create_method("dpcl_policy", reference_name=reference,
                              policy_mode=mode, gradient_backend=backend)
 
     def test_continuous_and_half_match_dense_oracle_with_global_bn_and_empty_errors(self):
@@ -54,14 +54,14 @@ class DPCOPolicyTests(unittest.TestCase):
             for reference in ("loss", "error"):
                 oracle = dense_statistics(task, create_reference(reference), state.params,
                                           batch, state.model_state, include_energy=False)
-                for mode, expected in (("continuous", oracle.dpco), ("half",
-                        jax.tree_util.tree_map(lambda d, s: .5*(d+s), oracle.sgd, oracle.dpco))):
+                for mode, expected in (("continuous", oracle.dpcl), ("half",
+                        jax.tree_util.tree_map(lambda d, s: .5*(d+s), oracle.sgd, oracle.dpcl))):
                     for backend in ("audit", "jvp"):
                         method = self.method(mode, reference, backend)
                         result = jax.jit(lambda p, b, s: method.compute_direction(task, p, b, s,
                             method.initial_state()))(state.params, batch, state.model_state)
                         self.assert_tree_close(result.direction, expected)
-                        baseline_name = "dpco" if mode == "continuous" else "dtv"
+                        baseline_name = "dpcl" if mode == "continuous" else "dtv"
                         original = create_method(baseline_name, reference_name=reference,
                             gradient_backend=backend)
                         baseline = jax.jit(lambda p, b, s: original.compute_direction(task, p, b, s))(
@@ -70,14 +70,14 @@ class DPCOPolicyTests(unittest.TestCase):
                         self.assert_tree_close(result.model_state, baseline.model_state, exact=True)
                         self.assertEqual(float(result.metrics["policy_alpha"]), 1. if mode == "continuous" else .5)
 
-    def test_alternating_compiled_rounds_match_manual_sgd_dpco_and_commit_state_once(self):
+    def test_alternating_compiled_rounds_match_manual_sgd_dpcl_and_commit_state_once(self):
         method = self.method("alternating")
         trainer = Trainer(QuadraticTask(), method, SGDUpdate(.01))
         state = TrainState({"x": jnp.zeros(1)}, {"calls": jnp.asarray(0)}, method.initial_state())
         expected = state._replace(method_state=None)
         compiled = trainer.compile_step()
         for t in range(6):
-            reference = Trainer(trainer.task, create_method("dpco" if t % 2 else "sgd",
+            reference = Trainer(trainer.task, create_method("dpcl" if t % 2 else "sgd",
                 gradient_backend="jvp"), trainer.updater)
             expected, _ = reference.compile_step()(expected, scalar_batch(), jax.random.key(t))
             state, metrics = compiled(state, scalar_batch(), jax.random.key(t))
@@ -87,24 +87,24 @@ class DPCOPolicyTests(unittest.TestCase):
             self.assertEqual(int(state.method_state.updates), t+1)
             self.assertEqual(float(metrics["policy_alpha"]), float(t % 2))
 
-    def test_sgd_round_does_not_execute_the_dpco_branch(self):
-        from src.methods.dpco import DPCO
+    def test_sgd_round_does_not_execute_the_dpcl_branch(self):
+        from src.methods.dpcl import DPCL
         executed = []
-        class MarkedDPCO(DPCO):
+        class MarkedDPCL(DPCL):
             def compute_direction(self, *args, **kwargs):
                 result = super().compute_direction(*args, **kwargs)
-                jax.debug.callback(lambda: executed.append("dpco"), ordered=True)
+                jax.debug.callback(lambda: executed.append("dpcl"), ordered=True)
                 return result
         method = self.method("alternating")
         state = TrainState({"x": jnp.zeros(1)}, {"calls": jnp.asarray(0)}, method.initial_state())
-        with patch("src.methods.dpco_policy.DPCO", MarkedDPCO):
+        with patch("src.methods.dpcl_policy.DPCL", MarkedDPCL):
             step = Trainer(QuadraticTask(), method, SGDUpdate(.01)).compile_step()
             for t in range(4):
                 state, _ = step(state, scalar_batch(), jax.random.key(t))
                 jax.block_until_ready(state)
                 self.assertEqual(len(executed), (t+1)//2)
 
-    def test_policy_diagnostics_separate_actual_direction_from_full_dpco_counterfactual(self):
+    def test_policy_diagnostics_separate_actual_direction_from_full_dpcl_counterfactual(self):
         task, batch = QuadraticTask(), AnalyticBatch(*scalar_batch())
         for mode in ("continuous", "alternating", "half"):
             method = self.method(mode)
@@ -112,7 +112,7 @@ class DPCOPolicyTests(unittest.TestCase):
             trainer = Trainer(task, method, SGDUpdate(.01))
             observer = TrainingDiagnostics(task, method,
                 DiagnosticConfig(enabled=True, lr_scales=(1., .5), audit_batches=1),
-                reference_name="loss", trajectory_method="dpco_policy",
+                reference_name="loss", trajectory_method="dpcl_policy",
                 audit_batches=(TrainingAuditBatch("audit", batch),))
             for t in range(2):
                 before = state
@@ -132,7 +132,7 @@ class DPCOPolicyTests(unittest.TestCase):
                     self.assertEqual(row["actual_update_in_pair"], row["lr_scale"] == 1.)
                 self.assertEqual(full[0]["actual_update_in_pair"], alpha in (0., 1.))
                 if mode == "half":
-                    self.assertNotEqual(actual[0]["j_policy"], full[0]["j_dpco"])
+                    self.assertNotEqual(actual[0]["j_policy"], full[0]["j_dpcl"])
                 self.assertEqual(int(state.method_state.updates), t+1)
 
     def test_runner_resume_and_diagnostic_switch_preserve_each_policy_trajectory(self):
@@ -140,14 +140,14 @@ class DPCOPolicyTests(unittest.TestCase):
             with TemporaryDirectory() as tmp:
                 finals = []
                 for enabled in (False, True):
-                    config = replace(fixture_config(tmp), method=MethodConfig("dpco_policy", policy_mode=mode),
+                    config = replace(fixture_config(tmp), method=MethodConfig("dpcl_policy", policy_mode=mode),
                         diagnostics=DiagnosticConfig(enabled=enabled, steps=(0, 1, 2, 3),
                             audit_batches=1, lr_scales=(1., .5)))
-                    trainer, source, evaluation, initial, _ = fixture_components(replace(config, method=MethodConfig("dpco")))
+                    trainer, source, evaluation, initial, _ = fixture_components(replace(config, method=MethodConfig("dpcl")))
                     method = self.method(mode, reference="error", backend="audit")
                     trainer = trainer.with_method(method)
                     observer = TrainingDiagnostics(trainer.task, method, config.diagnostics,
-                        reference_name="error", trajectory_method="dpco_policy",
+                        reference_name="error", trajectory_method="dpcl_policy",
                         audit_batches=(TrainingAuditBatch("audit", source.batches[0]),)) if enabled else None
                     runner = ExperimentRunner(
                         config, trainer, source, evaluation, base_dir=ROOT, train_sample_count=5,
@@ -160,7 +160,7 @@ class DPCOPolicyTests(unittest.TestCase):
                     self.assertEqual([float(r["policy_alpha"]) for r in policy], expected_alphas)
                     self.assertEqual(int(final.method_state.updates), 4)
                     self.assertEqual(len(read_rows(runner.paths.parent.logs / "run_status.tsv")), 2 if not enabled else 6)
-                    # Restore an odd completed step, where alternation must next use DPCO.
+                    # Restore an odd completed step, where alternation must next use DPCL.
                     source.restore({"index": 0})
                     restored = ExperimentRunner(config, trainer, source, evaluation, base_dir=ROOT,
                         train_sample_count=5, metadata={}, diagnostics=observer, run_name=runner.paths.name,
@@ -170,9 +170,9 @@ class DPCOPolicyTests(unittest.TestCase):
                 self.assert_tree_close(finals[0], finals[1], exact=True)
 
     def test_suite_aliases_round_trip_and_isolate_run_names(self):
-        env = {**os.environ, "DPCO_PYTHON": sys.executable}
-        output = subprocess.check_output([str(ROOT / "run_dpco_suite.sh"), "--dry-run", "--methods",
-            *POLICY_METHODS, "sgd", "dpco_l", "--seeds", "2", "5", "--diagnostics"],
+        env = {**os.environ, "DPCL_PYTHON": sys.executable}
+        output = subprocess.check_output([str(ROOT / "run_dpcl_suite.sh"), "--dry-run", "--methods",
+            *POLICY_METHODS, "sgd", "dpcl_l", "--seeds", "2", "5", "--diagnostics"],
             cwd=gettempdir(), env=env, text=True)
         plans = json.loads(output)
         self.assertEqual(len(plans), 16)
@@ -182,18 +182,18 @@ class DPCOPolicyTests(unittest.TestCase):
             config = resolve_config(get("--config"), mode=get("--mode"), seed=int(get("--seed")),
                 method=get("--method"), diagnostics=True)
             self.assertEqual(config.method.name, plan["method"])
-            if config.method.name == "dpco_policy":
+            if config.method.name == "dpcl_policy":
                 self.assertEqual(config.method.policy_mode, plan["policy_mode"])
-                self.assertIn(f"dpco_{'e' if config.reference.name == 'error' else 'l'}_{config.method.policy_mode}", plan["stdout"])
+                self.assertIn(f"dpcl_{'e' if config.reference.name == 'error' else 'l'}_{config.method.policy_mode}", plan["stdout"])
         config = resolve_config(ROOT / "configs/tpu/imagenet100_resnet50_sgd.toml", mode="train")
         with self.assertRaises(ValueError):
-            replace(config, method=MethodConfig("dpco_policy", policy_mode="invalid")).validate()
+            replace(config, method=MethodConfig("dpcl_policy", policy_mode="invalid")).validate()
         with self.assertRaises(ValueError):
-            replace(config, method=MethodConfig("dpco", policy_mode="half")).validate()
+            replace(config, method=MethodConfig("dpcl", policy_mode="half")).validate()
         with self.assertRaises(ValueError):
-            replace(config, method=MethodConfig("dpco_policy"), probes=ProbeConfig(enabled=True)).validate()
+            replace(config, method=MethodConfig("dpcl_policy"), probes=ProbeConfig(enabled=True)).validate()
         output = subprocess.check_output([str(ROOT / "run_inaturalist_suite.sh"), "--dry-run",
-            "--methods", "dpco_l_alternating", "dpco_l_half", "--seed", "5"],
+            "--methods", "dpcl_l_alternating", "dpcl_l_half", "--seed", "5"],
             cwd=gettempdir(), env=env, text=True)
         self.assertEqual([p["policy_mode"] for p in json.loads(output)], ["alternating", "half"])
 
@@ -205,7 +205,7 @@ class DPCOPolicyTests(unittest.TestCase):
         after, _ = trainer.compile_step()(before, batch, jax.random.key(0))
         observer = TrainingDiagnostics(trainer.task, method,
             DiagnosticConfig(enabled=True, transfer=False, lr_scales=(1.,)),
-            reference_name="loss", trajectory_method="dpco_policy")
+            reference_name="loss", trajectory_method="dpcl_policy")
         rows = observe(observer, before, after, batch, eta=0.)
         row = next(r for s, r in rows if s == "diagnostic_policy")
         self.assertEqual(row["difference"], 0.)
@@ -214,7 +214,7 @@ class DPCOPolicyTests(unittest.TestCase):
             observe(observer, before, after._replace(method_state=PolicyState(jnp.asarray(9))), batch)
 
     def test_legacy_resume_accepts_missing_policy_field_without_rewriting_metadata(self):
-        for name in ("sgd", "dpco"):
+        for name in ("sgd", "dpcl"):
             with TemporaryDirectory() as tmp:
                 config = replace(fixture_config(tmp), method=MethodConfig(name))
                 trainer, source, evaluation, initial, _ = fixture_components(config)
@@ -238,12 +238,12 @@ class DPCOPolicyTests(unittest.TestCase):
         from src.models.resnet import ResNet
         from tests.test_tpu_pipeline import fake_stream
         for mode, first in (("continuous", "sgd"), ("alternating", "sgd"),
-                            ("alternating", "dpco"), ("half", "sgd")):
+                            ("alternating", "dpcl"), ("half", "sgd")):
             with TemporaryDirectory() as tmp:
                 images = prepare(DataPlan("fixture", "a"*40, {0: 0, 1: 1}, "fixture", 8, 3),
                     Path(tmp)/"data", stream_factory=fake_stream)
                 config = resolve_config(ROOT / "configs/tpu/imagenet100_resnet50_sgd.toml", mode="smoke",
-                    steps=2, batch_size=2, method=f"dpco_l_{mode}", alternating_first=first, diagnostics=True,
+                    steps=2, batch_size=2, method=f"dpcl_l_{mode}", alternating_first=first, diagnostics=True,
                     diagnostic_steps=[0, 1], diagnostic_transfer=False, diagnostic_lr_scales=[1.])
                 config = replace(config, data=replace(config.data, image_size=8),
                     results=ResultsConfig(str(Path(tmp)/"results")))

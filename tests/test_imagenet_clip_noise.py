@@ -30,10 +30,10 @@ from src.training import TrainState
 from src.training.checkpoints import CheckpointStore
 from src.training.evaluation import noisy_classification_evaluation
 from src.training.launch import resolve_config
-from tests.test_dpco_history import assert_tree
+from tests.test_dpcl_history import assert_tree
 
 ROOT = Path(__file__).resolve().parents[1]
-PRESET = ROOT / "configs/tpu/dpco/imagenet100_resnet50.toml"
+PRESET = ROOT / "configs/tpu/dpcl/imagenet100_resnet50.toml"
 
 
 def fixture(root, n=20):
@@ -225,7 +225,7 @@ class CLIPNoiseTests(unittest.TestCase):
             subprocess.check_output([*base, "--stage", "audit", "--image-db", str(db), "--audit-count", "2"], cwd=ROOT)
             manifest = output / "noise_manifest.json"
             plans = json.loads(subprocess.check_output([sys.executable, "scripts/run_suite.py", "--config", str(PRESET),
-                "--dry-run", "--noise-manifest", str(manifest), "--methods", "adam", "dpco_filter", "dpco_flip"], cwd=ROOT))
+                "--dry-run", "--noise-manifest", str(manifest), "--methods", "adam", "dpcl_filter", "dpcl_flip"], cwd=ROOT))
             for plan in plans:
                 self.assertEqual(plan["noise_manifest"], str(manifest))
                 self.assertEqual(plan["noise_type"], "clip_idn")
@@ -238,7 +238,7 @@ class CLIPNoiseTests(unittest.TestCase):
         from scripts.train_classification import run
         with TemporaryDirectory() as tmp:
             _, _, manifest = artifact(tmp)
-            for method in ("adam", "dpco_filter", "dpco_flip"):
+            for method in ("adam", "dpcl_filter", "dpcl_flip"):
                 config = resolve_config(PRESET, mode="train", steps=2, batch_size=2,
                     method=method, data_dir=str(Path(tmp) / "data"), noise_manifest=str(manifest),
                     eval_every_steps=1, checkpoint_every_steps=1)

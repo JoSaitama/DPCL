@@ -18,7 +18,7 @@ from src.models.resnet import ResNet
 from src.training.checkpoints import CheckpointStore
 from src.training.launch import resolve_config
 from tests.test_cifar100n import PRESET, config, fixture
-from tests.test_dpco_history import assert_tree
+from tests.test_dpcl_history import assert_tree
 
 
 class ModelSelectionTests(unittest.TestCase):

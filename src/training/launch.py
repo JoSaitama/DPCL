@@ -4,13 +4,16 @@ import argparse
 from dataclasses import replace
 from pathlib import Path
 
-from src.config import DATASET_CLASSES, INATURALIST_PREPARED_DIR, MODELS, MethodConfig, ReferenceConfig, load_config
+from src.config import DATASET_CLASSES, DIGITS_MODEL, INATURALIST_PREPARED_DIR, MODELS, MethodConfig, ReferenceConfig, load_config
 
 
-EXPERIMENT_METHODS = {"adam": ("adam", "loss"), "dpco": ("dpco", "ema"),
-                      "dpco_filter": ("dpco", "ema"), "dpco_flip": ("dpco", "ema"), "sgd": ("sgd", "loss"), "dpco_e": ("dpco", "error"),
-                      "dpco_l": ("dpco", "loss"), "dpco_r": ("dpco", "correct")}
-POLICY_METHODS = {f"dpco_{reference}_{mode}": (signal, mode)
+SELF_METHODS = ("self_flip", "self_filter")
+EDIT_WEIGHTS = {"dpcl_flip": -1., "dpcl_filter": 0., "self_flip": -1., "self_filter": 0.}
+EXPERIMENT_METHODS = {"adam": ("adam", "loss"), "dpcl": ("dpcl", "ema"),
+                      **dict.fromkeys(EDIT_WEIGHTS, ("dpcl", "ema")),
+                      "sgd": ("sgd", "loss"), "dpcl_e": ("dpcl", "error"),
+                      "dpcl_l": ("dpcl", "loss"), "dpcl_r": ("dpcl", "correct")}
+POLICY_METHODS = {f"dpcl_{reference}_{mode}": (signal, mode)
                   for reference, signal in (("l", "loss"), ("e", "error"))
                   for mode in ("continuous", "alternating", "half")}
 
@@ -28,9 +31,10 @@ def add_overrides(parser, *, multiple=False):
         parser.add_argument("--seed", type=int)
         parser.add_argument("--method", choices=(*EXPERIMENT_METHODS, *POLICY_METHODS))
     parser.add_argument("--optimizer", choices=("sgd", "adam"))
-    parser.add_argument("--reference-beta", type=float, help="Raw batch-gradient EMA decay; default 0.9")
+    parser.add_argument("--reference-beta", type=float,
+                        help="Raw batch-gradient EMA decay; self_flip and self_filter always use 0")
     parser.add_argument("--negative-weight", type=float,
-                        help="DPCO contribution for alignment < 0: 0 filter, -1 flip; any finite scalar")
+                        help="DPCL contribution for alignment < 0: 0 filter, -1 flip; any finite scalar")
     parser.add_argument("--adam-beta1", type=float)
     parser.add_argument("--adam-beta2", type=float)
     parser.add_argument("--adam-epsilon", type=float)
@@ -45,14 +49,14 @@ def add_overrides(parser, *, multiple=False):
     parser.add_argument("--noise-percent", "--expected-noise-percent", dest="noise_percent", type=float,
                         help="Expected ACTUAL mismatch percentage (0..100), checked after loading; never generates noise")
     parser.add_argument("--label-noise-percent", type=float,
-                        help="MNIST only: generate this percentage of fixed wrong labels (0..100); 0 is clean")
+                        help="MNIST/Digits: generate this percentage of fixed wrong labels (0..100); 0 is clean")
     parser.add_argument("--download", action=argparse.BooleanOptionalAction, default=None,
                         help="Allow dataset source downloads; CNWL still needs original ImageNet sources in data-dir/raw")
     parser.add_argument("--dataset", choices=tuple(DATASET_CLASSES))
-    parser.add_argument("--alternating-first", choices=("sgd", "dpco"),
-                        help="First update of alternating DPCO policies; default sgd. Other methods in a suite are unchanged.")
-    parser.add_argument("--dpco-warmup-percent", type=float,
-                        help="Initial percentage of updates using SGD before original/continuous DPCO; 0 (default) disables it. Other suite methods are unchanged.")
+    parser.add_argument("--alternating-first", choices=("sgd", "dpcl"),
+                        help="First update of alternating DPCL policies; default sgd. Other methods in a suite are unchanged.")
+    parser.add_argument("--dpcl-warmup-percent", type=float,
+                        help="Initial percentage of updates using SGD before original/continuous DPCL; 0 (default) disables it. Other suite methods are unchanged.")
     parser.add_argument("--data-dir", help="Prepared data location, relative to the repository or absolute; iNaturalist uses the subset directory itself")
     parser.add_argument("--model", choices=MODELS,
                         help="resnet50/101 keep existing ImageNet stem; cifar_resnet* use native stem; mnist_cnn/mlp have no BN")
@@ -110,15 +114,15 @@ def cifar_cli_args(args):
     return command
 
 
-DPCO_OPTIONS = ("optimizer", "reference_beta", "negative_weight", "adam_beta1", "adam_beta2", "adam_epsilon")
+DPCL_OPTIONS = ("optimizer", "reference_beta", "negative_weight", "adam_beta1", "adam_beta2", "adam_epsilon")
 
 
-def dpco_overrides(args):
-    return {name: getattr(args, name, None) for name in DPCO_OPTIONS}
+def dpcl_overrides(args):
+    return {name: getattr(args, name, None) for name in DPCL_OPTIONS}
 
 
-def dpco_cli_args(args):
-    return [part for name, value in dpco_overrides(args).items() if value is not None
+def dpcl_cli_args(args):
+    return [part for name, value in dpcl_overrides(args).items() if value is not None
             for part in ("--" + name.replace("_", "-"), str(value))]
 
 
@@ -149,7 +153,7 @@ def diagnostic_cli_args(args):
 
 def resolve_config(path, *, mode, steps=None, batch_size=None, seed=None,
                    method=None, dataset=None, model=None, data_mode=None, data_dir=None, l2_coefficient=None,
-                   alternating_first=None, dpco_warmup_percent=None,
+                   alternating_first=None, dpcl_warmup_percent=None,
                    momentum=None, nesterov=None, learning_rate=None, lr_schedule=None,
                    min_learning_rate=None, optimizer=None, reference_beta=None, negative_weight=None,
                    adam_beta1=None, adam_beta2=None, adam_epsilon=None,
@@ -172,58 +176,62 @@ def resolve_config(path, *, mode, steps=None, batch_size=None, seed=None,
     if method is not None:
         if method in POLICY_METHODS:
             reference, policy_mode = POLICY_METHODS[method]
-            selected_method = MethodConfig("dpco_policy", policy_mode=policy_mode)
+            selected_method = MethodConfig("dpcl_policy", policy_mode=policy_mode)
         else:
             name, reference = EXPERIMENT_METHODS[method]
-            weight = {"dpco_filter": 0., "dpco_flip": -1.}.get(method,
+            weight = EDIT_WEIGHTS.get(method,
                 config.method.negative_weight if config.reference.name == "ema" else -1.)
             selected_method = MethodConfig(name, negative_weight=weight if reference == "ema" else -1.)
         config = replace(config, method=selected_method,
                          reference=replace(config.reference, name=reference))
-        if method in ("adam", "dpco", "dpco_filter", "dpco_flip"):
+        if method in ("adam", "dpcl") or method in EDIT_WEIGHTS:
             config = replace(config, training=replace(config.training, optimizer="adam", momentum=0., nesterov=False))
         elif method == "sgd":
             config = replace(config, training=replace(config.training, optimizer="sgd"))
-    if reference_beta is not None:
+    if method in SELF_METHODS:
+        # A mixed suite can set a shared beta for its DPCL arms without
+        # overriding the current-batch-only reference in its Self arms.
+        config = replace(config, reference=replace(config.reference, beta=0.))
+    elif reference_beta is not None:
         config = replace(config, reference=replace(config.reference, beta=reference_beta))
     if negative_weight is not None:
         import math
         if isinstance(negative_weight, bool) or not math.isfinite(negative_weight):
             raise ValueError("negative_weight must be a finite number")
     if negative_weight is not None and config.reference.name == "ema":
-        if method in ("dpco_filter", "dpco_flip") and negative_weight != config.method.negative_weight:
-            raise ValueError("Alias conflicts with negative_weight; use --method dpco for custom weights")
+        if method in EDIT_WEIGHTS and negative_weight != config.method.negative_weight:
+            raise ValueError("Alias conflicts with negative_weight; use --method dpcl for custom weights")
         config = replace(config, method=replace(config.method, negative_weight=negative_weight))
     elif negative_weight is not None and config.method.name != "adam":
-        raise ValueError("negative_weight requires dpco with EMA reference")
+        raise ValueError("negative_weight requires dpcl with EMA reference")
     if alternating_first is not None:
-        if alternating_first not in ("sgd", "dpco"):
-            raise ValueError("alternating_first must be sgd or dpco")
+        if alternating_first not in ("sgd", "dpcl"):
+            raise ValueError("alternating_first must be sgd or dpcl")
         # A common suite option applies only to its alternating jobs. Preserve
         # baseline/continuous/half configs and their identities exactly.
-        if config.method.name == "dpco_policy" and config.method.policy_mode == "alternating":
+        if config.method.name == "dpcl_policy" and config.method.policy_mode == "alternating":
             config = replace(config, method=replace(config.method, alternating_first=alternating_first))
-    if dpco_warmup_percent is not None:
+    if dpcl_warmup_percent is not None:
         import math
-        if (isinstance(dpco_warmup_percent, bool) or not math.isfinite(dpco_warmup_percent)
-                or not 0 <= dpco_warmup_percent <= 100):
-            raise ValueError("dpco_warmup_percent must be finite and in [0, 100]")
+        if (isinstance(dpcl_warmup_percent, bool) or not math.isfinite(dpcl_warmup_percent)
+                or not 0 <= dpcl_warmup_percent <= 100):
+            raise ValueError("dpcl_warmup_percent must be finite and in [0, 100]")
         # A mixed suite can share the option without changing SGD, alternating
         # or half policies. Direct TOML configurations reject invalid combinations.
-        if config.method.name == "dpco" or (config.method.name == "dpco_policy"
+        if config.method.name == "dpcl" or (config.method.name == "dpcl_policy"
                 and config.method.policy_mode == "continuous"):
-            config = replace(config, method=replace(config.method, dpco_warmup_percent=dpco_warmup_percent))
+            config = replace(config, method=replace(config.method, dpcl_warmup_percent=dpcl_warmup_percent))
     if dataset is not None:
         directory = config.data.prepared_dir
         if dataset != config.data.name:
-            if dataset in ("cifar100n", "mnist", "cnwl"):
+            if dataset in ("cifar100n", "mnist", "digits", "cnwl"):
                 directory = "../data/" + dataset
             elif dataset == "inaturalist2021":
                 directory = INATURALIST_PREPARED_DIR
-            elif config.data.name in ("inaturalist2021", "cifar100n", "mnist", "cnwl"):
+            elif config.data.name in ("inaturalist2021", "cifar100n", "mnist", "digits", "cnwl"):
                 directory = "../data"
         manifest = config.data.class_manifest
-        if dataset in ("inaturalist2021", "cifar100n", "mnist", "cnwl"):
+        if dataset in ("inaturalist2021", "cifar100n", "mnist", "digits", "cnwl"):
             manifest = None
         elif dataset == "imagenet100" and manifest is None:
             manifest = "configs/manifests/imagenet100_classes.txt"
@@ -237,17 +245,19 @@ def resolve_config(path, *, mode, steps=None, batch_size=None, seed=None,
                            noise_seed=0, noise_percent=None, label_noise_percent=0., download=False)
             if model is None:
                 config = replace(config, model=replace(config.model, name="resnet50"))
-        elif dataset == "mnist" and config.data.name != "mnist":
-            changes.update(image_size=28, mode="noisy", noise_type="symmetric", is_human=False,
-                           noise_seed=0, noise_percent=None, label_noise_percent=20., download=False)
+        elif dataset in ("mnist", "digits") and config.data.name != dataset:
+            changes.update(image_size=8 if dataset == "digits" else 28, mode="noisy",
+                           noise_type="symmetric", is_human=False, noise_seed=0, noise_percent=None,
+                           label_noise_percent=20., download=dataset == "digits")
             if model is None:
-                config = replace(config, model=replace(config.model, name="mnist_cnn"))
+                config = replace(config, model=replace(config.model,
+                    name=DIGITS_MODEL if dataset == "digits" else "mnist_cnn"))
         elif dataset == "cifar100n" and config.data.name != "cifar100n":
             changes.update(image_size=32, mode="noisy", noise_type="noisy100", is_human=True,
                            noise_seed=0, noise_percent=None, label_noise_percent=0., download=False)
             if model is None:
                 config = replace(config, model=replace(config.model, name="cifar_resnet34"))
-        elif dataset not in ("cifar100n", "mnist", "cnwl") and config.data.name in ("cifar100n", "mnist", "cnwl"):
+        elif dataset not in ("cifar100n", "mnist", "digits", "cnwl") and config.data.name in ("cifar100n", "mnist", "digits", "cnwl"):
             changes.update(image_size=224, mode="clean", noise_type=None, is_human=True,
                            noise_seed=0, noise_percent=None, download=False, label_noise_percent=0.)
             if model is None:
@@ -263,7 +273,7 @@ def resolve_config(path, *, mode, steps=None, batch_size=None, seed=None,
                 noise_changes["mode"] = "clean" if cnwl_noise_percent == 0 else "noisy"
             if noise_percent is None:
                 noise_changes["noise_percent"] = None
-    if config.data.name == "mnist":
+    if config.data.name in ("mnist", "digits"):
         if label_noise_percent is not None:
             if data_mode is None:
                 noise_changes["mode"] = "noisy" if label_noise_percent > 0 else "clean"
@@ -307,7 +317,7 @@ def resolve_config(path, *, mode, steps=None, batch_size=None, seed=None,
     elif eval_every_epochs is not None:
         config = replace(config, evaluation=replace(config.evaluation,
             mode="epochs", interval=eval_every_epochs))
-    if config.data.mode != "clean" and config.data.name not in ("cifar100n", "mnist", "cnwl") and not config.data.noise_manifest:
+    if config.data.mode != "clean" and config.data.name not in ("cifar100n", "mnist", "digits", "cnwl") and not config.data.noise_manifest:
         raise ValueError("Only data-mode=clean is implemented; mismatch modes are reserved, not silently simulated")
     if steps is not None:
         if steps <= 0:

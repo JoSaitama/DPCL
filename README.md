@@ -1,4 +1,16 @@
-# DPCO
+# DPCL — Data-parameter Co-Learning
+
+The project is named **DPCL (Data-parameter Co-Learning)**. Use `dpcl`,
+`dpcl_flip`, and `dpcl_filter` in new commands. Python modules, config paths,
+shell wrappers, the `DPCL_PYTHON` environment variable, and the
+`dpcl-research` distribution use the same name. New intervention records are
+`dpcl_steps.csv` with `dpcl_*` fields.
+
+Existing experiment directories, CSVs, checkpoints, and figures retain their
+original names. Offline plot readers accept both legacy and current exports;
+new plots label the method DPCL. This rename does not migrate old checkpoints
+or promise cross-version resume. Keep the original version for an old run.
+The outer `Project_DPCO` workspace and Git remote have not been renamed.
 
 Research code for SGD and sample-contribution correction with task/reference/method
 separation. Repository code, comments and documentation use English.
@@ -9,10 +21,21 @@ The repository keeps its README files and third-party license notices.
 
 ## Current stage
 
-The new DPCO + Adam implementation supports ordinary Adam
+The new DPCL + Adam implementation supports ordinary Adam
 and a current-inclusive raw-gradient EMA reference with configurable negative
-contributions: `--method dpco --negative-weight 0` filters, `-1` flips, and other
+contributions: `--method dpcl --negative-weight 0` filters, `-1` flips, and other
 finite weights are accepted.
+
+To compare the five Adam training arms, pass
+`--methods adam dpcl_flip dpcl_filter self_flip self_filter --reference-beta 0.5`
+to `scripts/run_suite.py`. The Self aliases fix the reference beta at zero even
+when a shared `--reference-beta` is passed, so their reference is the current
+batch mean gradient. All four edit arms use the same negative-score rule:
+Flip uses weight `-1`, Filter uses `0`, and nonnegative scores keep weight `1`.
+Both Self aliases also work with `--method` in the single-run trainer.
+Run names keep the resolved settings (`dpcl_ema_b0_w-1` or `dpcl_ema_b0_w0`
+for Self), so existing result readers still work. This comparison does not use
+the professor's fixed bottom-6 selection.
 
 CIFAR-100N preparation and training now connects the authors'
 human annotations to the same three-method Adam flow, native 32x32 ResNets, and
@@ -20,12 +43,18 @@ fixed clean/corrupted ordinary-CE evaluation. Use
 `python scripts/prepare_cifar100n.py --stage plan` and
 `./run_cifar100n_suite.sh --dry-run` to inspect preparation and jobs. Its human
 noise percentage is measured (40.2%), not an adjustable corruption generator.
-The existing ImageNet preset remains `configs/tpu/dpco/imagenet100_resnet50.toml`;
+The existing ImageNet preset remains `configs/tpu/dpcl/imagenet100_resnet50.toml`;
 synthetic noise injection into ImageNet is still separate planned work.
 
 MNIST preparation and controlled experiments now use the same
 Adam/EMA/filter/flip flow, with native grayscale images and fixed synthetic labels.
-The default `configs/tpu/mnist/dpco_adam.toml` selects a small no-BN CNN and 20%
+The separate sklearn Digits preset, `configs/tpu/digits/dpcl_adam.toml`, uses
+an 8×8 `digits_mlp` and downloads the verified 1,797-image sklearn asset to
+`../data/digits/raw/` on first use. `scripts/prepare_digits.py --stage plan`
+shows the source and split. Use the five-method list above with this preset.
+The held-out test split and fixed training label noise are local reproducible
+choices; they do not establish the professor's exact split or training budget.
+The default `configs/tpu/mnist/dpcl_adam.toml` selects a small no-BN CNN and 20%
 corruption; `--label-noise-percent` controls this generator independently of the
 existing actual-rate assertion `--noise-percent`. Choose architecture explicitly
 with `--model`: CIFAR also accepts the existing `resnet50`/`resnet101` models or
@@ -43,17 +72,17 @@ required; source availability is checked without dropping missing samples.
 Opt-in TPU mechanism checks extend the real classification
 suite with both references, absolute LR candidates, a genuinely fixed train-mode
 bank, finite-bank moments and continuous-window accounting. They are off by
-default. `run_dpco_mechanism_suite.sh` is the separate TPU wrapper; the existing
+default. `run_dpcl_mechanism_suite.sh` is the separate TPU wrapper; the existing
 synthetic theory suite remains CPU-only. Development tests do not certify TPU.
 
 An independent CPU theory/LR validation suite tests
-the original SGD/DPCO-E/DPCO-L on smooth synthetic classification data, with
+the original SGD/DPCL-E/DPCL-L on smooth synthetic classification data, with
 analytic counterexamples, conditional moments and full-target cumulative bounds.
-Run `./run_dpco_theory_suite.sh --dry-run` to inspect its grid. It does not launch
+Run `./run_dpcl_theory_suite.sh --dry-run` to inspect its grid. It does not launch
 TPU training, download data, save checkpoints or change the production/policy paths.
 
 The first real-device pipeline targets ImageNet-100, ResNet-50, and two sequential
-SGD/DPCO-E runs on node-ziao1 worker0. Worker1 remains idle and is not a peer. Later
+SGD/DPCL-E runs on node-ziao1 worker0. Worker1 remains idle and is not a peer. Later
 ImageNet-1K/ResNet-101 checks use the same adapters after first-stage validation.
 
 Implemented: a Flax ResNet V1.5 adapter, pinned Hugging Face data preparation, host-local
@@ -81,20 +110,20 @@ batches. Enable with `--diagnostics` through either shell suite; default is off.
 The observer preserves the selected optimizer and original compiled training step.
 Its switches are independent of the older fixed-batch theorem probes.
 
-## Opt-in continuous, alternating and half DPCO
+## Opt-in continuous, alternating and half DPCL
 
-Existing `sgd`, `dpco_l` and `dpco_e` commands keep their original implementations.
+Existing `sgd`, `dpcl_l` and `dpcl_e` commands keep their original implementations.
 New method aliases select a separate policy wrapper:
 
 | Loss reference | Error reference | Correction strength alpha |
 |---|---|---|
-| `dpco_l_continuous` | `dpco_e_continuous` | 1 on every update |
-| `dpco_l_alternating` | `dpco_e_alternating` | 0, 1, 0, 1, ... by default; first method is configurable |
-| `dpco_l_half` | `dpco_e_half` | 0.5 on every update |
+| `dpcl_l_continuous` | `dpcl_e_continuous` | 1 on every update |
+| `dpcl_l_alternating` | `dpcl_e_alternating` | 0, 1, 0, 1, ... by default; first method is configurable |
+| `dpcl_l_half` | `dpcl_e_half` | 0.5 on every update |
 
 The direction is `Gd + alpha * (Gs - Gd)` before the common learning-rate update.
 Half means filtering negative alignment with the original B denominator (the
-existing DTV calculation), not half the learning rate or separate complete SGD/DPCO
+existing DTV calculation), not half the learning rate or separate complete SGD/DPCL
 computations. Half still needs reference/alignment work; half strength does not
 promise half the wall time.
 Alternating uses a compiled conditional: SGD rounds skip reference/alignment work.
@@ -102,19 +131,19 @@ Each round commits one model state and one parameter update. The checkpointed
 policy counter preserves phase on resume, including resumes after an odd update.
 
 For either alternating alias, `--alternating-first sgd` (default) selects
-SGD -> DPCO -> SGD, while `--alternating-first dpco` selects DPCO -> SGD -> DPCO.
+SGD -> DPCL -> SGD, while `--alternating-first dpcl` selects DPCL -> SGD -> DPCL.
 This suite option applies only to alternating jobs; baseline, continuous and half
 jobs in the same grid are unchanged. It reaches both the nohup parent and child.
 The effective config stores method.alternating_first; changing it on resume is
-rejected. Runs using the nondefault DPCO-first order add `_first_dpco` to their
+rejected. Runs using the nondefault DPCL-first order add `_first_dpcl` to their
 directory label and status method value. Per-step policy_alpha/executed_method
 records show the actual order, and diagnostic metadata records its first method.
 
 An example server smoke suite (real TPU through the existing nohup launcher):
 
 ```bash
-nohup ./run_dpco_suite.sh --mode smoke --steps 5 --batch-size 16 \
-  --methods dpco_l_continuous dpco_l_alternating dpco_l_half sgd --seed 5 \
+nohup ./run_dpcl_suite.sh --mode smoke --steps 5 --batch-size 16 \
+  --methods dpcl_l_continuous dpcl_l_alternating dpcl_l_half sgd --seed 5 \
   --no-theorem-probes --diagnostics --diagnostic-steps 0 1 2 3 4 \
   --no-diagnostic-transfer --diagnostic-lr-scales 1 0.5 \
   >/dev/null 2>&1 < /dev/null &
@@ -128,7 +157,7 @@ status TSV keeps its existing start/end-only schema and identifies policy mode
 in its method value. Original jobs create no policy CSV.
 
 Use `--diagnostics` for the new modes. Legacy `--theorem-probes` remains restricted
-to the original full DPCO method and is not silently reinterpreted. Full-DPCO
+to the original full DPCL method and is not silently reinterpreted. Full-DPCL
 counterfactuals remain in diagnostic_paired/transfer; diagnostic_policy records
 the active policy versus SGD, with alpha-scaled objective gain and the real policy
 endpoint at scale 1. See diagnostic semantics.
@@ -136,39 +165,39 @@ endpoint at scale 1. See diagnostic semantics.
 ## Exported CSV guide and local training plots
 
 See the result CSV guide for every stream's fields,
-T1/T2/T3 scope, active-policy versus full-DPCO candidates, and Mac instructions.
+T1/T2/T3 scope, active-policy versus full-DPCL candidates, and Mac instructions.
 `scripts/plot_training_results.py` reads exported CSV/metadata without importing
 JAX or training code. It compares initial LRs by line style, uses blue for SGD,
-red for DPCO-E and orange for DPCO-L, and exports PNG/PDF/SVG plus provenance.
+red for DPCL-E and orange for DPCL-L, and exports PNG/PDF/SVG plus provenance.
 Warmup comparisons separate fixed-10% LR effects (`warmup10`) from fixed-LR
 10%/30% SGD-prefix effects (`warmup_percent`); both include matching original
 SGD baselines. See the guide for percentage/LR selection parameters.
 Raw files are never edited; repeated comparable runs require explicit selection.
 
-## Optional SGD prefix before DPCO
+## Optional SGD prefix before DPCL
 
-`--dpco-warmup-percent P` runs the first `ceil(total_steps * P / 100)`
-updates with SGD, then switches to the original full DPCO-E/L rule. Default
+`--dpcl-warmup-percent P` runs the first `ceil(total_steps * P / 100)`
+updates with SGD, then switches to the original full DPCL-E/L rule. Default
 `P=0` preserves the original method and compiled training path. `P=100` runs
 SGD for the entire budget. This is a method warmup, not a learning-rate warmup:
 the configured LR schedule continues on absolute completed updates throughout.
-For example, `--steps 5000 --dpco-warmup-percent 10` uses SGD on updates 1–500
-and DPCO from update 501. The SGD prefix is part of the total training budget.
+For example, `--steps 5000 --dpcl-warmup-percent 10` uses SGD on updates 1–500
+and DPCL from update 501. The SGD prefix is part of the total training budget.
 
 ```bash
-./run_dpco_suite.sh --dry-run --methods dpco_e dpco_l sgd --seed 5 \
-  --steps 5000 --batch-size 256 --lr 0.01 --dpco-warmup-percent 10 \
+./run_dpcl_suite.sh --dry-run --methods dpcl_e dpcl_l sgd --seed 5 \
+  --steps 5000 --batch-size 256 --lr 0.01 --dpcl-warmup-percent 10 \
   --no-theorem-probes
 ```
 
-The shared option applies to `dpco_e`, `dpco_l` and their `_continuous` aliases.
+The shared option applies to `dpcl_e`, `dpcl_l` and their `_continuous` aliases.
 SGD, half and alternating suite jobs keep their original behavior. In TOML set
-`method.dpco_warmup_percent = 10.0`; nonzero values on unsupported methods are
+`method.dpcl_warmup_percent = 10.0`; nonzero values on unsupported methods are
 rejected. Percentages must be finite and between 0 and 100, including endpoints.
 
 Warmup runs include `_warmup10pct` (or the chosen percentage) in their run names
 and lifecycle method label. `policy_steps.csv` records `policy_mode=warmup`,
-`policy_alpha=0/1` and `executed_method=sgd/dpco` for each completed update;
+`policy_alpha=0/1` and `executed_method=sgd/dpcl` for each completed update;
 printed train JSON includes the same fields. The config in `metadata.json`
 preserves the percentage, and suite dry-run reports the resolved update count.
 Checkpoint recovery preserves the absolute phase; changing the percentage or
@@ -178,10 +207,10 @@ unchanged. Compilation warmup discards its candidate and consumes no prefix step
 
 Legacy `--theorem-probes` is incompatible with this phased method; use
 `--no-theorem-probes`. Optional `--diagnostics` handles both phases and records
-the active direction separately from full-DPCO counterfactuals. Extended
-`--mechanisms` supports the original `dpco_e/l` warmup runs: `actual_endpoint`
-is `sgd` during the prefix and `dpco` afterwards, while source T1/pairs and
-conditional moments still describe hypothetical full-DPCO directions. The
+the active direction separately from full-DPCL counterfactuals. Extended
+`--mechanisms` supports the original `dpcl_e/l` warmup runs: `actual_endpoint`
+is `sgd` during the prefix and `dpcl` afterwards, while source T1/pairs and
+conditional moments still describe hypothetical full-DPCL directions. The
 extended observer retains its existing restriction on `_continuous` aliases.
 This option enables a controlled experiment; it does not guarantee stability
 or an advantage over SGD.
@@ -190,7 +219,7 @@ or an advantage over SGD.
 
 Use a separate Python 3.11+ environment. Do not reuse another project's dependencies:
 
-    cd ~/Project_DPCO/DPCO
+    cd ~/Project_DPCO/DPCL
     python3 --version
     python3 -m venv ../.venv
     source ../.venv/bin/activate
@@ -208,7 +237,7 @@ tokens never belong in configuration or Git. Optional interactive checks:
 First run offline foreground CPU sanity:
 
     python scripts/sanity_check.py --config configs/tpu/imagenet100_resnet50_sgd.toml
-    python scripts/sanity_check.py --config configs/tpu/imagenet100_resnet50_dpco_e.toml
+    python scripts/sanity_check.py --config configs/tpu/imagenet100_resnet50_dpcl_e.toml
 
 CPU scripts were renamed from smoke_test.py/smoke_recording.py to
 sanity_core.py/sanity_recording.py. Their synthetic linear classifier is not ResNet.
@@ -218,9 +247,9 @@ Then launch a real TPU smoke with the supplied nohup wrapper:
     python scripts/launch_tpu.py --mode smoke --config configs/tpu/imagenet100_resnet50_sgd.toml
 
 It prints the PID and exact per-run stdout.log path. Monitor that path with tail -f.
-After SGD completes successfully, launch DPCO-E:
+After SGD completes successfully, launch DPCL-E:
 
-    python scripts/launch_tpu.py --mode smoke --config configs/tpu/imagenet100_resnet50_dpco_e.toml
+    python scripts/launch_tpu.py --mode smoke --config configs/tpu/imagenet100_resnet50_dpcl_e.toml
 
 For these single direct Python launches, no outer nohup is needed: the launcher uses detached input,
 unbuffered output and a new session. Both jobs must run sequentially on worker0.
@@ -239,18 +268,18 @@ images, with three updates by default. It is not a complete dataset/theory bench
 ## Shell suites and seed overrides
 
 Use the executable root script for training suites. It defaults to train mode,
-ImageNet-100, ResNet-50, DPCO-E, clean data and seed 42, using the TPU pilot config.
+ImageNet-100, ResNet-50, DPCL-E, clean data and seed 42, using the TPU pilot config.
 The global batch defaults to 256 for train/validate and 8 for smoke. An explicit
 `--batch-size` overrides either mode; all four local TPU devices share this batch.
-The Python interpreter defaults to outer Project_DPCO/.venv/bin/python; set DPCO_PYTHON
+The Python interpreter defaults to outer Project_DPCO/.venv/bin/python; set DPCL_PYTHON
 to another project-specific interpreter path if needed. The script works from any cwd.
 
-Example: three sequential DPCO-E TPU smokes, with three updates each:
+Example: three sequential DPCL-E TPU smokes, with three updates each:
 
 ```bash
-nohup ./run_dpco_suite.sh \
+nohup ./run_dpcl_suite.sh \
   --mode smoke --dataset imagenet100 --model resnet50 \
-  --methods dpco_e --seeds 10 15 22 --data-mode clean \
+  --methods dpcl_e --seeds 10 15 22 --data-mode clean \
   >/dev/null 2>&1 < /dev/null &
 ```
 
@@ -261,8 +290,8 @@ config; an explicit seed in a custom config is
 honored when the CLI omits seeds. To resume an older seed-0 run, pass `--seed 0` and
 retain all its original settings. Resume permits just one seed/method.
 
-`--methods dpco_e dpco_l sgd` runs each method for each listed seed, in seed-major
-order. The method labels select dpco/error, dpco/loss, or unmodified SGD. Select
+`--methods dpcl_e dpcl_l sgd` runs each method for each listed seed, in seed-major
+order. The method labels select dpcl/error, dpcl/loss, or unmodified SGD. Select
 `--dataset imagenet100|imagenet1k|inaturalist2021|cifar100n|mnist|cnwl` and `--model` from
 the supported model names (see dataset guides). ImageNet/iNaturalist require
 `--data-mode clean`; CIFAR/MNIST/CNWL label modes follow their explicit noise controls
@@ -278,19 +307,19 @@ overrides the logical batch. The wrapper always waits, so use the outer nohup ab
 to keep the whole queue alive after SSH disconnect. Preview without starting jobs:
 
 ```bash
-./run_dpco_suite.sh --methods dpco_e dpco_l sgd --seeds 10 15 --dry-run
+./run_dpcl_suite.sh --methods dpcl_e dpcl_l sgd --seeds 10 15 --dry-run
 ```
 
 The independent `run_inaturalist_suite.sh` entry accepts the same options. Pilot
 defaults: ResNet-50 from scratch, training seed 5, 2,000 steps/method, B=256,
 constant LR=0.01, L2/momentum/Nesterov off, validation every epoch, probes off,
-method order `dpco_e sgd dpco_l`. These are screening settings, not a tuned recipe.
+method order `dpcl_e sgd dpcl_l`. These are screening settings, not a tuned recipe.
 
 ```bash
 ./run_inaturalist_suite.sh --dry-run
 mkdir -p results/logs/inaturalist2021_seed5_suite
 nohup ./run_inaturalist_suite.sh --mode train --seeds 5 \
-  --methods dpco_e sgd dpco_l --steps 2000 \
+  --methods dpcl_e sgd dpcl_l --steps 2000 \
   --data-dir ../data/inaturalist2021_full_t140000_v20000_s42 \
   >results/logs/inaturalist2021_seed5_suite/launcher.log 2>&1 < /dev/null &
 ```
@@ -395,7 +424,7 @@ names retain their original format; resume continues to use the explicit saved n
 Preview a configured suite without launching or downloading:
 
 ```bash
-./run_dpco_suite.sh --methods dpco_e dpco_l sgd --seeds 2 5 7 \
+./run_dpcl_suite.sh --methods dpcl_e dpcl_l sgd --seeds 2 5 7 \
   --batch-size 256 --momentum 0.9 --lr 0.1 \
   --lr-schedule cosine --min-lr 0 --l2-coefficient 0 --dry-run
 ```
@@ -438,16 +467,16 @@ Training shuffles a complete local epoch deterministically, then applies reprodu
 random resized crops/flips. Incomplete training tails are dropped so BatchNorm never
 sees padding; evaluation covers every valid example with a masked padded final batch.
 
-## DPCO-E, DPCO-L and continuous DPCO-R
+## DPCL-E, DPCL-L and continuous DPCL-R
 
 All three variants use ordinary per-image cross entropy and its current-parameter
 gradient. Prediction feedback selects a reference; raw gradient alignment decides correction.
 
 | Experiment label | Method | Reference | Definition |
 | --- | --- | --- | --- |
-| DPCO-E / dpco_e | dpco | error | Mean gradient of currently misclassified valid batch examples |
-| DPCO-R / dpco_r | dpco | correct | Mean gradient of currently correctly classified valid batch examples |
-| DPCO-L / dpco_l | dpco | loss | Mean gradient of all valid batch examples |
+| DPCL-E / dpcl_e | dpcl | error | Mean gradient of currently misclassified valid batch examples |
+| DPCL-R / dpcl_r | dpcl | correct | Mean gradient of currently correctly classified valid batch examples |
+| DPCL-L / dpcl_l | dpcl | loss | Mean gradient of all valid batch examples |
 
 For error, freeze the current selection E = {i: argmax(logits_i) != label_i} when
 differentiating its surrogate mean loss. Rebuild it each batch. No historical error
@@ -462,14 +491,14 @@ The correct-reference denominator is |R|, while the final update denominator
 remains the full valid B. Every valid example is scored and can be flipped,
 including correct examples that conflict with their set's mean gradient.
 
-The first R implementation supports only continuous `--methods dpco_r`, with
+The first R implementation supports only continuous `--methods dpcl_r`, with
 no method warmup, half, alternating or LOO variant. Existing E/L/SGD commands
 and optimizer defaults are unchanged. No new preset is required; the suite
-override composes method=dpco with reference=correct on the existing base config.
+override composes method=dpcl with reference=correct on the existing base config.
 For example, run this manually on worker0 to request a real nohup TPU smoke:
 
 ```bash
-nohup ./run_dpco_suite.sh --mode smoke --methods dpco_r --seeds 5 \
+nohup ./run_dpcl_suite.sh --mode smoke --methods dpcl_r --seeds 5 \
   --steps 5 --batch-size 16 --lr 0.01 --lr-schedule constant \
   --momentum 0 --no-nesterov --l2-coefficient 0 \
   --no-checkpoints --no-theorem-probes --diagnostics \
@@ -477,7 +506,7 @@ nohup ./run_dpco_suite.sh --mode smoke --methods dpco_r --seeds 5 \
   --diagnostic-lr-scales 1 0.5 >/dev/null 2>&1 < /dev/null &
 ```
 
-New run directories include `_dpco_r_`; metadata/status store reference=correct.
+New run directories include `_dpcl_r_`; metadata/status store reference=correct.
 Optional paired observers label the frozen reference objective `frozen_correct_ce`
 (or `source_frozen_correct_ce` in mechanism streams), separately from full-batch
 and fixed-bank targets. Empty correct sets do not emit a fictitious correct-set CE.
@@ -486,7 +515,7 @@ Mechanism R runs add correct-reference comparisons and bank moments; old E/L/SGD
 runs retain their original observer workload. Existing synthetic CPU theory and
 E/L plotting suites are not extended to R by this training change.
 
-Score every valid contribution with q_i = r^T g_i. DPCO uses weight -1 for a negative
+Score every valid contribution with q_i = r^T g_i. DPCL uses weight -1 for a negative
 score and +1 otherwise, including zero. Return sum(w_i*g_i)/B using the original valid
 B; preserve gradient magnitude, do not cosine/unit-normalize, and apply LR once.
 An erroneous example is not automatically flipped; a correct example may be flipped.
@@ -506,7 +535,7 @@ is inferred from the final gradient tensor size alone. Training BN
 uses the same realized logical batch in all derivative passes, with state committed
 once. These per-example loss derivatives can include BN cross-example coupling.
 
-SGD skips reference construction. There is no sgd_e method. dpco_e/dpco_l/dpco_r are
+SGD skips reference construction. There is no sgd_e method. dpcl_e/dpcl_l/dpcl_r are
 experiment labels; method and reference remain separate configuration fields.
 
 ## Components and other methods
@@ -526,7 +555,7 @@ commit hypothetical updates.
 | Method | Nonnegative score | Negative score |
 | --- | --- | --- |
 | sgd | +1 | +1 |
-| dpco | +1 | -1 |
+| dpcl | +1 | -1 |
 | dtv | +1 | 0 |
 | random_flip | Independent Bernoulli(p) flip | Independent Bernoulli(p) flip |
 
@@ -542,12 +571,12 @@ The eight root presets remain core integration configurations. The two runnable 
 profiles are in configs/tpu/ and share data, initialization, LR, B and budget.
 
 - smoke: real TPU/model, limited real data, probes off in supplied profiles, short budget.
-- validate: full selected data, configured T1-3 probes on a DPCO trajectory.
+- validate: full selected data, configured T1-3 probes on a DPCL trajectory.
 - train: full selected data and configured budget; probes normally disabled.
 
 Example controlled diagnostics after smoke succeeds:
 
-    python scripts/launch_tpu.py --mode validate --steps 20 --config configs/tpu/imagenet100_resnet50_dpco_e.toml
+    python scripts/launch_tpu.py --mode validate --steps 20 --config configs/tpu/imagenet100_resnet50_dpcl_e.toml
 
 This can require a long first data preparation. Sparse audit gradients can be costly.
 Reference gains and target-transfer diagnostics do not by themselves prove the
@@ -591,7 +620,7 @@ and augmentation. No distributed checkpoint guarantee is implied.
     python -m pip install -e '.[test]'
     JAX_PLATFORMS=cpu JAX_PLATFORM_NAME=cpu python -m unittest discover -s tests -v
     python scripts/launch_tpu.py --mode smoke --config configs/tpu/imagenet100_resnet50_sgd.toml --dry-run
-    python main.py --check-config --config configs/tpu/imagenet100_resnet50_dpco_e.toml
+    python main.py --check-config --config configs/tpu/imagenet100_resnet50_dpcl_e.toml
 
 Tests include independent analytic directions, JVP/Jacobian parity, BN state handling,
 real 50/101 parameter shapes, two-CPU global batch/BN parity, deterministic data
