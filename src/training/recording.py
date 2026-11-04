@@ -62,6 +62,40 @@ def atomic_json(path, value):
     os.replace(temporary, path)
 
 
+FINAL_METRICS_FILE = "final_metrics.json"
+
+
+def write_final_metrics(files, evaluation, group_rows, *, samples_seen, evaluation_mode, execution_mode):
+    """Publish final full-group metrics for datasets with known original labels."""
+    groups = {row["group"]: row for row in group_rows}
+    required = ("clean", "corrupted_original", "corrupted_noisy")
+    if not all(group in groups for group in required):
+        return
+    clean, true, wrong = (groups[group] for group in required)
+    if true["sample_count"] != wrong["sample_count"]:
+        raise ValueError("Final corrupted label views must cover the same sample count")
+    atomic_json(files / FINAL_METRICS_FILE, {
+        "step": evaluation["step"],
+        "samples_seen": samples_seen,
+        "model": "final",
+        "execution_mode": execution_mode,
+        "evaluation_mode": evaluation_mode,
+        "accuracy_unit": "fraction",
+        "metrics": {
+            "clean_test_ce": evaluation["val_ce"],
+            "test_acc": evaluation["val_top1"],
+            "corrupt_true_ce": true["ce"],
+            "corrupt_wrong_ce": wrong["ce"],
+        },
+        "clean_train_ce": clean["ce"],
+        "sample_counts": {
+            "held_out": evaluation["eval_sample_count"],
+            "clean_train": clean["sample_count"],
+            "corrupted_train": true["sample_count"],
+        },
+    })
+
+
 def environment_metadata(base_dir):
     def git(*args):
         try:

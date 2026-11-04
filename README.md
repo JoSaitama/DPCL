@@ -10,7 +10,7 @@ Existing experiment directories, CSVs, checkpoints, and figures retain their
 original names. Offline plot readers accept both legacy and current exports;
 new plots label the method DPCL. This rename does not migrate old checkpoints
 or promise cross-version resume. Keep the original version for an old run.
-The outer `Project_DPCO` workspace and Git remote have not been renamed.
+The outer workspace is now `Project_DPCL` locally and on the server. The Git remote is unchanged.
 
 Research code for SGD and sample-contribution correction with task/reference/method
 separation. Repository code, comments and documentation use English.
@@ -54,6 +54,11 @@ an 8×8 `digits_mlp` and downloads the verified 1,797-image sklearn asset to
 shows the source and split. Use the five-method list above with this preset.
 The held-out test split and fixed training label noise are local reproducible
 choices; they do not establish the professor's exact split or training budget.
+Runs with both corrupted-label views save a separate
+`results/files/<run_name>/final_metrics.json` at completion. It reuses the
+final full evaluation (the configured subset for smoke runs), reports held-out
+CE and accuracy plus both corrupted-group CEs, and separately records
+clean-training CE. The step-wise CSVs are still written.
 The default `configs/tpu/mnist/dpcl_adam.toml` selects a small no-BN CNN and 20%
 corruption; `--label-noise-percent` controls this generator independently of the
 existing actual-rate assertion `--noise-percent`. Choose architecture explicitly
@@ -219,7 +224,7 @@ or an advantage over SGD.
 
 Use a separate Python 3.11+ environment. Do not reuse another project's dependencies:
 
-    cd ~/Project_DPCO/DPCL
+    cd ~/Project_DPCL/DPCL
     python3 --version
     python3 -m venv ../.venv
     source ../.venv/bin/activate
@@ -271,7 +276,7 @@ Use the executable root script for training suites. It defaults to train mode,
 ImageNet-100, ResNet-50, DPCL-E, clean data and seed 42, using the TPU pilot config.
 The global batch defaults to 256 for train/validate and 8 for smoke. An explicit
 `--batch-size` overrides either mode; all four local TPU devices share this batch.
-The Python interpreter defaults to outer Project_DPCO/.venv/bin/python; set DPCL_PYTHON
+The Python interpreter defaults to outer Project_DPCL/.venv/bin/python; set DPCL_PYTHON
 to another project-specific interpreter path if needed. The script works from any cwd.
 
 Example: three sequential DPCL-E TPU smokes, with three updates each:
@@ -451,7 +456,7 @@ download is necessary and no HF checkpoint is silently used.
 
 Data is streamed from the official ILSVRC/imagenet-1k HF repository at a pinned commit.
 The versioned CMC manifest fixes 100 synsets, original 1K labels and the 0..99 mapping.
-Only selected original image bytes are cached in outer Project_DPCO/data/ using SQLite.
+Only selected original image bytes are cached in outer Project_DPCL/data/ using SQLite.
 No full archive or duplicate Arrow dataset is deliberately materialized. Full 100-class
 preparation may still read much of the ~154 GB original train/validation source over
 the network; limited smoke preparation stops after a small number of selected images.

@@ -9,7 +9,7 @@
 在服务器DPCL根目录执行下面整段。替换三处 `YOUR_*_RUN` 为实际目录名。安装绘图依赖和绘图均在同一个nohup任务内顺序运行，日志/PID位于results/logs。
 
 ```bash
-cd /home/jason_chia925_gmail_com/Project_DPCO/DPCL
+cd /home/jason_chia925_gmail_com/Project_DPCL/DPCL
 mkdir -p results/logs
 export DPCL_PYTHON="$PWD/../.venv/bin/python"
 log="results/logs/plot_dpcl_$(date +%Y%m%d_%H%M%S).log"
@@ -105,7 +105,7 @@ tail -n 30 "$log"
 下面精确列出已导入的九个run名；假定服务器原结果保留在 `results/files/`。如果服务器CSV在另一位置，只修改 `base`，不改run名。日志中出现缺少metadata的提示是便携CSV导出的已知限制，不表示缺少训练指标。
 
 ```bash
-cd /home/jason_chia925_gmail_com/Project_DPCO/DPCL
+cd /home/jason_chia925_gmail_com/Project_DPCL/DPCL
 mkdir -p results/logs
 base="$PWD/results/files"
 prefix="mnist_noisy_mnist_cnn"
@@ -113,7 +113,7 @@ log="results/logs/plot_mnist_clean_original_$(date +%Y%m%d_%H%M%S).log"
 
 nohup bash -c '
   set -e
-  py="/home/jason_chia925_gmail_com/Project_DPCO/.venv/bin/python"
+  py="/home/jason_chia925_gmail_com/Project_DPCL/.venv/bin/python"
   "$py" -m pip install -e ".[plot]"
   exec "$py" -u plots/plot_dpcl_training.py "$@"
 ' _ \

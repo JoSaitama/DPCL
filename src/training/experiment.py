@@ -16,7 +16,7 @@ from src.config import DataConfig, DiagnosticConfig, TrainingConfig, MechanismCo
 from src.methods.base import AlignmentMethod
 from src.training.checkpoints import CheckpointStore
 from src.training.randomness import training_key
-from src.training.recording import RunRecorder, environment_metadata
+from src.training.recording import FINAL_METRICS_FILE, RunRecorder, environment_metadata, write_final_metrics
 from src.training.results import ResultsPaths, make_run_name
 from src.training.schedules import EventSchedule, milestone_steps
 from src.training.status import RunStatus
@@ -50,6 +50,7 @@ class ExperimentRunner:
             record = config.probes.enabled and (config.probes.theorem1 or config.probes.theorem3)
             self.trainer = trainer.with_method(replace(trainer.method, record_theory=record))
         self.evaluation, self.probes = evaluation, probes
+        self.execution_mode = metadata.get("execution_mode", "sanity")
         self.diagnostics = diagnostics if config.diagnostics.enabled else None
         self.mechanism = mechanism if config.mechanism.enabled else None
         schemas = None
@@ -141,6 +142,8 @@ class ExperimentRunner:
             state = state._replace(method_state=self.trainer.method.initial_state(state.params))
         cumulative = dict(cumulative_reference_gain=0., cumulative_eta=0., cumulative_eta_sq=0.)
         best, best_step, last_eval = None, None, None
+        last_groups = None
+        group_evaluator = getattr(self.evaluation, "evaluate_groups", None)
         if self.resume:
             saved = self.store.load(resume_slot)
             if self.mechanism is not None:
@@ -164,6 +167,8 @@ class ExperimentRunner:
             cumulative, best, best_step = saved["cumulative"], saved["best"], saved["best_step"]
             last_eval, elapsed_offset = saved["last_eval"], saved["elapsed_wall_s"]
             recorder.rewind(saved["csv_cursors"])
+            # A previous final report no longer describes a rewound run.
+            (self.paths.files / FINAL_METRICS_FILE).unlink(missing_ok=True)
             self.store.discard_future(int(state.step))
         initializer = getattr(self.trainer.updater, "init", None)
         if state.optimizer_state is None and callable(initializer):
@@ -198,8 +203,16 @@ class ExperimentRunner:
                 peak = None if stats is None else stats.get("peak_bytes_in_use")
                 timing("memory_snapshot", 0., device=str(device), peak_device_memory_bytes=peak)
 
+        def collect_groups():
+            rows = tuple(group_evaluator(state)) if callable(group_evaluator) else ()
+            for row in rows:
+                metrics = (row["ce"], row["top1"], row["top5"])
+                if row["sample_count"] > 0 and not all(v is not None and math.isfinite(float(v)) for v in metrics):
+                    raise FloatingPointError("Non-finite fixed-group metrics")
+            return rows
+
         def evaluate():
-            nonlocal best, best_step, last_eval
+            nonlocal best, best_step, last_eval, last_groups
             before = time.perf_counter()
             values = self.evaluation.evaluate(state)
             if not all(math.isfinite(float(v)) for v in values.values()):
@@ -208,16 +221,11 @@ class ExperimentRunner:
             improved = getattr(self.evaluation, "select_best", True) and (best is None or values["val_top1"] > best)
             if improved:
                 best, best_step = values["val_top1"], int(state.step)
-            group_rows = (self.evaluation.evaluate_groups(state)
-                          if callable(getattr(self.evaluation, "evaluate_groups", None)) else ())
-            for row in group_rows:
-                metrics = (row["ce"], row["top1"], row["top5"])
-                if row["sample_count"] > 0 and not all(v is not None and math.isfinite(float(v)) for v in metrics):
-                    raise FloatingPointError("Non-finite fixed-group metrics")
+            last_groups = collect_groups()
             recorder.record("evaluation", **last_eval, samples_seen=samples_seen,
                 epoch_progress=samples_seen / self.sample_count, elapsed_wall_s=elapsed(),
                 eval_duration_s=time.perf_counter() - before)
-            for row in group_rows:
+            for row in last_groups:
                 recorder.record("group_evaluation", step=int(state.step), samples_seen=samples_seen, **row)
                 recorder.log("group_evaluation", step=int(state.step), **row)
             recorder.log("validation", **last_eval, elapsed_wall_s=elapsed())
@@ -405,6 +413,15 @@ class ExperimentRunner:
                     if step % c.logging.csv_flush_steps == 0:
                         recorder.flush()
                     window_start = time.perf_counter()
+            if callable(group_evaluator):
+                if last_eval is None or last_eval["step"] != step or step != c.training.total_steps:
+                    raise ValueError("Final metrics require evaluation at the final training step")
+                # Normal runs have already evaluated every group at the last step.
+                # A resume from a final checkpoint can have no in-memory group rows.
+                if last_groups is None:
+                    last_groups = collect_groups()
+                write_final_metrics(self.paths.files, last_eval, last_groups, samples_seen=samples_seen,
+                    evaluation_mode=self.evaluation.mode, execution_mode=self.execution_mode)
             summary = dict(status="completed", step=step, samples_seen=samples_seen, elapsed_wall_s=elapsed(),
                 final_val_ce=last_eval["val_ce"], final_val_top1=last_eval["val_top1"],
                 final_val_top5=last_eval["val_top5"], best_val_top1=best, best_step=best_step)
