@@ -2,7 +2,7 @@
 
 `plot_dpcl_training.py` 是独立的离线绘图入口，只需标准库和 Matplotlib，不导入 JAX、Flax、Optax 或 TPU。它不会修改训练CSV或checkpoint，也不会启动训练。原 `scripts/plot_training_results.py` 的历史绘图接口保持不变。
 
-默认 `--plot-set training` 沿用原有五图模式，显式选择三个不同目录，每个目录需要完整、已刷盘的 `train_steps.csv` 和 `timing.csv`。新增 `--plot-set clean-original` 模式读取固定训练分组评价，每个方法可重复传入多个seed目录，详见下文。两种模式均支持绝对路径、相对DPCL根目录的路径，或 `results/files/` 下的单个run目录名；不自动寻找“最新”或“最好”的运行。若有对应的 `results/logs/<run_name>/metadata.json`，会核验方法标签，并报告训练设置差异；仅复制所需CSV也可以绘图，但会注明无法核对元信息。
+默认 `--plot-set training` 沿用原有五图模式，显式选择三个不同目录，每个目录需要完整、已刷盘的 `train_steps.csv` 和 `timing.csv`。新增 `--plot-set clean-original` 模式读取固定训练分组评价，每个方法可重复传入多个seed目录，详见下文。两种模式均支持绝对路径、相对DPCL根目录的路径，或 `results/files/` 下的单个run目录名；不自动寻找“最新”或“最好”的运行。新运行可传 `results/files/<group>/<run_name>`（或绝对路径）。若有对应的 `results/logs/<group>/<run_name>/metadata.json` 或旧版平层元信息，会核验方法标签，并报告训练设置差异；仅复制所需CSV也可以绘图，但会注明无法核对元信息。
 
 基线二选一：Adam用 `--adam-dir`，SGD用 `--sgd-dir`，两者互斥，支持的路径规则相同；Flip/Filter仍用 `--flip-dir` 和 `--filter-dir`。每次比较使用同一种优化器，metadata中的DPCL优化器必须与所选基线一致。SGD图例为蓝实线SGD，Flip红实线、Filter橙虚线，导出CSV和manifest也记作sgd，不会标为Adam。SGD的clean-original模式同样支持三seed等重复运行、均值与样本标准差；目录保留原始命名时，可识别 `sgd_<seed>` 及不含优化器标记的 `dpcl_ema_b..._w..._<seed>`，有metadata时优先核对其中seed。
 

@@ -20,20 +20,23 @@ sys.path.insert(0, str(ROOT))
 from src.config import load_config
 from src.training.launch import (absolute_path, add_overrides, diagnostic_cli_args,
                                  diagnostic_overrides, dpcl_overrides, dpcl_cli_args, cifar_overrides, cifar_cli_args, resolve_config)
-from src.training.results import ResultsPaths, make_run_name
+from src.training.results import ResultsPaths, infer_result_group, make_run_name, safe_component
 from src.training.schedules import dpcl_warmup_steps
 from src.training.runtime import configure_worker0
 from src.training.status import RunStatus
 from src.probes.mechanism_config import overrides as mechanism_overrides, cli_args as mechanism_cli_args
 
 
-def plan_job(args, path, config, method):
+def plan_job(args, path, config, method, *, result_group=None):
     """Build one child command without creating files or touching accelerators."""
     name = args.resume or make_run_name(config)
-    paths = ResultsPaths.resolve(config.results.root_dir, base_dir=ROOT).experiment(name)
+    results = ResultsPaths.resolve(config.results.root_dir, base_dir=ROOT, group=result_group)
+    paths = results.find_resume(name) if args.resume else results.experiment(name)
     command = ["nohup", sys.executable, "-u", str(ROOT / "scripts/train_classification.py"),
                "--config", str(path), "--mode", args.mode, "--run-name", name, "--reserved",
                "--seed", str(config.seed)]
+    if paths.parent.group is not None:
+        command.extend(("--result-group", paths.parent.group))
     for flag, value in (("--steps", args.steps), ("--batch-size", args.batch_size),
                         ("--method", method), ("--dataset", args.dataset),
                         ("--alternating-first", args.alternating_first),
@@ -92,7 +95,7 @@ def launch_job(args, config, paths, command, *, wait):
     print(f"Started nohup TPU job: pid={process.pid} run={paths.name}", flush=True)
     print(f"Log: {paths.logs / 'stdout.log'}", flush=True)
     if not wait:
-        print("Launched in background; check stdout.log and results/logs/run_status.tsv for completion.", flush=True)
+        print(f"Launched in background; check stdout.log and {status.path} for completion.", flush=True)
         return True
     # Wait for actual exit/TPU lock release, not just a completed log message.
     code = process.wait()
@@ -113,6 +116,8 @@ def main(*, default_mode="smoke", default_config=None, default_wait=False):
     parser.add_argument("--mode", choices=("smoke", "train", "validate"), default=default_mode)
     parser.add_argument("--steps", type=int)
     parser.add_argument("--batch-size", type=int)
+    parser.add_argument("--result-group", metavar="GROUP",
+                        help="Output group; defaults to dataset and edit budget for new runs")
     parser.add_argument("--resume", metavar="RUN_NAME")
     parser.add_argument("--resume-slot", default="latest",
                         choices=("initial", "p25", "p50", "p75", "final", "best", "latest"))
@@ -122,7 +127,13 @@ def main(*, default_mode="smoke", default_config=None, default_wait=False):
     add_overrides(parser, multiple=True)
     args = parser.parse_args()
     path = absolute_path(args.config, ROOT).resolve()
-    seeds = args.seeds if args.seeds is not None else [load_config(path).seed]
+    if args.result_group is not None:
+        try:
+            safe_component(args.result_group, "result_group")
+        except ValueError as error:
+            parser.error(str(error))
+    preset = load_config(path)
+    seeds = args.seeds if args.seeds is not None else [preset.seed]
     methods = args.methods or [None]
     if len(set(seeds)) != len(seeds) or len(set(methods)) != len(methods):
         parser.error("Seeds and methods must not contain duplicates")
@@ -147,10 +158,23 @@ def main(*, default_mode="smoke", default_config=None, default_wait=False):
             jobs.append((config, method))
     if args.resume and not jobs[0][0].checkpoints.enabled:
         parser.error("Resume requires checkpoints enabled; --no-checkpoints runs cannot be resumed")
+    result_group = args.result_group
+    if result_group is None and not args.resume:
+        edited = [config.method for config, _ in jobs if config.reference.name == "ema"]
+        if args.bottom_k is not None or args.bottom_k_percent is not None:
+            bottom_k, bottom_k_percent = args.bottom_k, args.bottom_k_percent
+        else:
+            method = edited[0] if edited else preset.method
+            bottom_k, bottom_k_percent = method.bottom_k, method.bottom_k_percent
+        result_group = infer_result_group(jobs[0][0].data.name, bottom_k=bottom_k,
+            bottom_k_percent=bottom_k_percent, has_ema=bool(edited))
     wait = args.wait or len(jobs) > 1
     if args.dry_run:
-        previews = [(config, *plan_job(args, path, config, method)) for config, method in jobs]
+        previews = [(config, *plan_job(args, path, config, method, result_group=result_group))
+                    for config, method in jobs]
         plans = [{"command": command, "stdout": str(paths.logs / "stdout.log"),
+            "result_group": paths.parent.group, "files_dir": str(paths.files),
+            "logs_dir": str(paths.logs), "runs_dir": str(paths.runs),
             "mode": args.mode, "backend": "tpu_only", "worker": "worker0_only", "wait": wait,
             "seed": config.seed, "method": config.method.name, "reference": config.reference.name,
             "policy_mode": config.method.policy_mode if config.method.name == "dpcl_policy" else None,
@@ -193,7 +217,7 @@ def main(*, default_mode="smoke", default_config=None, default_wait=False):
         return
     for config, method in jobs:
         # Timestamp each actual launch, rather than the earlier grid planning time.
-        paths, command = plan_job(args, path, config, method)
+        paths, command = plan_job(args, path, config, method, result_group=result_group)
         if not launch_job(args, config, paths, command, wait=wait):
             raise SystemExit(1)
     if wait:

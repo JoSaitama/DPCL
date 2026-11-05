@@ -6,29 +6,60 @@ from datetime import datetime
 import re
 
 
+def safe_component(value, field):
+    if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+", value) or value in (".", ".."):
+        raise ValueError(f"{field} must be one safe directory component")
+    return value
+
+
+def edit_budget_label(bottom_k, bottom_k_percent):
+    if bottom_k is not None:
+        return f"k{bottom_k}"
+    if bottom_k_percent is not None:
+        return "kpct" + format(bottom_k_percent, ".12g").replace("+", "")
+    return None
+
+
+def infer_result_group(dataset, *, bottom_k, bottom_k_percent, has_ema):
+    dataset = "digit" if dataset == "digits" else dataset
+    budget = edit_budget_label(bottom_k, bottom_k_percent)
+    if budget is not None:
+        return f"{dataset}_{budget}"
+    return f"{dataset}_allneg" if has_ema else dataset
+
+
 @dataclass(frozen=True)
 class ResultsPaths:
     root: Path
+    group: str | None = None
+
+    def __post_init__(self):
+        if self.group is not None:
+            safe_component(self.group, "result_group")
 
     @classmethod
-    def resolve(cls, root_dir: str, *, base_dir: Path):
+    def resolve(cls, root_dir: str, *, base_dir: Path, group=None):
         """Resolve relative output roots against an explicit project directory."""
         root = Path(root_dir).expanduser()
         if not root.is_absolute():
             root = Path(base_dir) / root
-        return cls(root.resolve())
+        return cls(root.resolve(), group)
+
+    def _stream(self, name):
+        stream = self.root / name
+        return stream / self.group if self.group is not None else stream
 
     @property
     def logs(self) -> Path:
-        return self.root / "logs"
+        return self._stream("logs")
 
     @property
     def runs(self) -> Path:
-        return self.root / "runs"
+        return self._stream("runs")
 
     @property
     def files(self) -> Path:
-        return self.root / "files"
+        return self._stream("files")
 
     def create(self) -> None:
         """Create directories only; never write logs, checkpoints, or CSV data."""
@@ -36,9 +67,26 @@ class ResultsPaths:
             path.mkdir(parents=True, exist_ok=True)
 
     def experiment(self, run_name):
-        if not re.fullmatch(r"[A-Za-z0-9_.-]+", run_name) or run_name in (".", ".."):
-            raise ValueError("run_name must be one safe directory component")
-        return ExperimentPaths(self, run_name)
+        return ExperimentPaths(self, safe_component(run_name, "run_name"))
+
+    def find_resume(self, run_name):
+        """Resolve one complete run, checking both grouped and legacy flat locations."""
+        initial = self.experiment(run_name)
+        if self.group is not None:
+            candidates = [initial]
+        else:
+            candidates = [initial]
+            if self.runs.is_dir():
+                candidates.extend(ResultsPaths(self.root, path.name).experiment(run_name)
+                    for path in self.runs.iterdir()
+                    if (path / run_name).is_dir() and re.fullmatch(r"[A-Za-z0-9_.-]+", path.name))
+        matches = [paths for paths in candidates if all(
+            directory.is_dir() for directory in (paths.logs, paths.runs, paths.files))]
+        if not matches:
+            raise FileNotFoundError(f"No complete result directories for resume run {run_name!r}")
+        if len(matches) != 1:
+            raise ValueError(f"Resume run {run_name!r} exists in multiple locations; specify --result-group")
+        return matches[0]
 
 
 def method_label(config):
@@ -50,10 +98,9 @@ def method_label(config):
             label += "_first_dpcl"
     if config.reference.name == "ema":
         label = "dpcl_ema_b" + format(config.reference.beta, ".12g") + "_w" + format(config.method.negative_weight, ".12g").replace("+", "")
-        if config.method.bottom_k is not None:
-            label += f"_k{config.method.bottom_k}"
-        elif config.method.bottom_k_percent is not None:
-            label += "_kpct" + format(config.method.bottom_k_percent, ".12g").replace("+", "")
+        budget = edit_budget_label(config.method.bottom_k, config.method.bottom_k_percent)
+        if budget is not None:
+            label += "_" + budget
     elif label in ("dpcl", "dpcl_loo", "dtv", "dtv_loo"):
         suffix = {"error": "_e", "loss": "_l", "correct": "_r"}[config.reference.name]
         label = label.replace("_loo", "") + suffix + ("_loo" if label.endswith("_loo") else "")

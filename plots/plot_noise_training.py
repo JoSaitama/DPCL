@@ -88,7 +88,11 @@ def identity(method, directory, sources):
     metadata = None
     for parent in directory.parents:
         if parent.name == "files":
-            path = parent.parent / "logs" / directory.name / "metadata.json"
+            logs = parent.parent / "logs"
+            path = logs / directory.relative_to(parent) / "metadata.json"
+            if not path.is_file():
+                # Some older CSV exports grouped files but kept flat logs.
+                path = logs / directory.name / "metadata.json"
             if path.is_file():
                 metadata = json.loads(read_bytes(path, sources))
             break

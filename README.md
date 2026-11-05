@@ -65,7 +65,7 @@ shows the source and split. Use the five-method list above with this preset.
 The held-out test split and fixed training label noise are local reproducible
 choices; they do not establish the professor's exact split or training budget.
 Runs with both corrupted-label views save a separate
-`results/files/<run_name>/final_metrics.json` at completion. It reuses the
+`results/files/<group>/<run_name>/final_metrics.json` at completion. It reuses the
 final full evaluation (the configured subset for smoke runs), reports held-out
 CE and accuracy plus both corrupted-group CEs, and separately records
 clean-training CE. The step-wise CSVs are still written.
@@ -271,7 +271,16 @@ unbuffered output and a new session. Both jobs must run sequentially on worker0.
 A host lock rejects overlapping jobs. No CPU/GPU fallback is permitted. A started
 PID alone does not establish success; look for tpu_ready and completed updates.
 
-`results/logs/run_status.tsv` is a shared, append-only status journal across runs/seeds.
+New launcher runs place per-run files, logs, and checkpoints in
+`results/{files,logs,runs}/<group>/<run_name>/`. A suite shares a group across
+all methods and seeds. The default uses the effective dataset and budget,
+e.g. `digit_k10`, `digit_kpct10`, or `digit_allneg` for uncapped EMA runs;
+plain runs without a budget use the dataset name. Pass `--result-group NAME`
+to override it. Resume finds the existing run in a group or the legacy flat
+layout; use `--result-group` to disambiguate duplicate run names.
+
+`results/logs/<group>/run_status.tsv` is an append-only status journal across
+runs/seeds in that group; legacy flat runs retain `results/logs/run_status.tsv`.
 Each attempt writes only start/running and end/completed-or-failed. It has no step/error
 columns or progress rows. Detailed errors and steps stay in the isolated per-run logs.
 Train JSON records start with step, event, train_ce and lr; CSV keeps learning_rate.

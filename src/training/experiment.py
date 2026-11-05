@@ -25,7 +25,8 @@ from src.training.status import RunStatus
 class ExperimentRunner:
     def __init__(self, config, trainer, source, evaluation, *, base_dir,
                  train_sample_count, metadata, probes=None, console=True,
-                 run_name=None, resume=False, reserved=False, status=None, diagnostics=None, mechanism=None):
+                 run_name=None, result_group=None, resume=False, reserved=False, status=None,
+                 diagnostics=None, mechanism=None):
         config.validate()
         if resume and not config.checkpoints.enabled:
             raise ValueError("Resume requires checkpoints enabled")
@@ -66,7 +67,8 @@ class ExperimentRunner:
             schemas = {**(SCHEMAS if schemas is None else schemas), "group_evaluation":
                 ("step", "samples_seen", "group", "label_source", "sample_count", "ce", "top1", "top5")}
         self.sample_count = train_sample_count
-        self.paths = ResultsPaths.resolve(config.results.root_dir, base_dir=base_dir).experiment(run_name or make_run_name(config))
+        self.paths = ResultsPaths.resolve(config.results.root_dir, base_dir=base_dir,
+                                          group=result_group).experiment(run_name or make_run_name(config))
         if reserved and not resume:
             self.paths.claim_reserved()
         else:
@@ -75,7 +77,7 @@ class ExperimentRunner:
         status = status or RunStatus(self.paths, config,
             mode=metadata.get("execution_mode", "sanity"), resume=resume)
         self.recorder = RunRecorder(self.paths, metadata={
-            "run_name": self.paths.name, "config": config.as_dict(),
+            "run_name": self.paths.name, "result_group": self.paths.parent.group, "config": config.as_dict(),
             "environment": environment_metadata(base_dir), "experiment": metadata,
             "devices": [{"id": device.id, "platform": device.platform,
                          "kind": device.device_kind} for device in jax.local_devices()],

@@ -154,8 +154,12 @@ def load_metadata(method, directory, sources, *, optimizer=None):
     if named_optimizer is not None and expected_optimizer is not None and named_optimizer != expected_optimizer:
         raise ValueError(f"{directory}: directory optimizer {named_optimizer} does not match requested {expected_optimizer}")
     # Metadata is optional for portable CSV exports, but validates labels when available.
-    if directory.parent.name == "files":
-        path = directory.parent.parent / "logs" / directory.name / "metadata.json"
+    files = next((parent for parent in directory.parents if parent.name == "files"), None)
+    if files is not None:
+        logs = files.parent / "logs"
+        path = logs / directory.relative_to(files) / "metadata.json"
+        if not path.is_file():
+            path = logs / directory.name / "metadata.json"
         if path.is_file():
             data = path.read_bytes()
             sources[path] = hashlib.sha256(data).hexdigest()

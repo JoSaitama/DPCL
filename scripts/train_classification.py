@@ -179,7 +179,8 @@ def run(args, config, devices, *, status):
             "theorem_scope": "reference identities and fixed-target diagnostics, not an automatic convergence-rate proof"}
         runner = ExperimentRunner(config, trainer, source, evaluation, base_dir=ROOT,
             train_sample_count=images.counts["train"], metadata=metadata, probes=probes,
-            run_name=args.run_name, resume=args.resume, reserved=args.reserved, status=status,
+            run_name=args.run_name, result_group=getattr(args, "result_group", None),
+            resume=args.resume, reserved=args.reserved, status=status,
             diagnostics=diagnostics, mechanism=mechanism)
         runner.run(state, resume_slot=args.resume_slot)
     finally:
@@ -193,6 +194,7 @@ def main():
     parser.add_argument("--steps", type=int)
     parser.add_argument("--batch-size", type=int)
     parser.add_argument("--run-name", required=True)
+    parser.add_argument("--result-group", help="Resolved by the launcher")
     parser.add_argument("--reserved", action="store_true")
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--resume-slot", default="latest")
@@ -215,7 +217,8 @@ def main():
                             **diagnostic_overrides(args), **dpcl_overrides(args), **cifar_overrides(args), **mechanism_overrides(args))
     if args.resume and not config.checkpoints.enabled:
         parser.error("Resume requires checkpoints enabled; --no-checkpoints runs cannot be resumed")
-    paths = ResultsPaths.resolve(config.results.root_dir, base_dir=ROOT).experiment(args.run_name)
+    paths = ResultsPaths.resolve(config.results.root_dir, base_dir=ROOT,
+                                 group=args.result_group).experiment(args.run_name)
     status = RunStatus(paths, config, mode=args.mode, resume=args.resume, attempt_id=args.attempt_id)
     with status.monitor():
         status.record("started")
