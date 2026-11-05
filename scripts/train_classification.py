@@ -65,7 +65,8 @@ def run(args, config, devices, *, status):
             flip_probability=config.method.flip_probability, gradient_backend="jvp",
             policy_mode=config.method.policy_mode, alternating_first=config.method.alternating_first,
             warmup_steps=dpcl_warmup_steps(config), reference_beta=config.reference.beta,
-            negative_weight=config.method.negative_weight)
+            negative_weight=config.method.negative_weight, bottom_k=config.method.bottom_k,
+            bottom_k_percent=config.method.bottom_k_percent)
         if config.reference.name == "ema":
             state = state._replace(method_state=jax.device_put(method.initial_state(params), replicated))
         elif config.method.name == "dpcl_policy" or dpcl_warmup_steps(config):
@@ -169,7 +170,7 @@ def run(args, config, devices, *, status):
             "optimizer": config.training.optimizer,
             "update_semantics": "Adam uses edited direction and its elementwise square; optional coupled kernel L2; no AdamW, clipping or norm matching" if config.training.optimizer == "adam" else "SGD with optional momentum/Nesterov and coupled kernel L2",
             "reference_semantics": "bias-corrected EMA of raw global batch gradients, current batch included; independent of Adam moments" if config.reference.name == "ema" else config.reference.name,
-            "sample_weight_semantics": "negative alignment gets method.negative_weight; zero/positive gets 1; original valid B denominator; stop-gradient weights" if config.reference.name == "ema" else "legacy method",
+            "sample_weight_semantics": "selected negative scores get method.negative_weight; optional bottom-k budget; other valid samples get 1; original valid B denominator; stop-gradient weights" if config.reference.name == "ema" else "legacy method",
             "model": config.model.name, "model_initialization": "random",
             "model_source_revision": model_revision(config.model.name),
             "parameter_count": sum(leaf.size for leaf in jax.tree_util.tree_leaves(params)),

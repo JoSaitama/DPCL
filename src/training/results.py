@@ -50,6 +50,10 @@ def method_label(config):
             label += "_first_dpcl"
     if config.reference.name == "ema":
         label = "dpcl_ema_b" + format(config.reference.beta, ".12g") + "_w" + format(config.method.negative_weight, ".12g").replace("+", "")
+        if config.method.bottom_k is not None:
+            label += f"_k{config.method.bottom_k}"
+        elif config.method.bottom_k_percent is not None:
+            label += "_kpct" + format(config.method.bottom_k_percent, ".12g").replace("+", "")
     elif label in ("dpcl", "dpcl_loo", "dtv", "dtv_loo"):
         suffix = {"error": "_e", "loss": "_l", "correct": "_r"}[config.reference.name]
         label = label.replace("_loo", "") + suffix + ("_loo" if label.endswith("_loo") else "")

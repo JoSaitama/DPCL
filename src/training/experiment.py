@@ -105,6 +105,8 @@ class ExperimentRunner:
             stored_config["method"].setdefault("alternating_first", "sgd")
             stored_config["method"].setdefault("dpcl_warmup_percent", 0.0)
             stored_config["method"].setdefault("negative_weight", -1.0)
+            stored_config["method"].setdefault("bottom_k", None)
+            stored_config["method"].setdefault("bottom_k_percent", None)
             stored_config["reference"].setdefault("beta", 0.9)
             for key in ("noise_type", "is_human", "noise_seed", "noise_percent", "download", "label_noise_percent"):
                 stored_config["data"].setdefault(key, getattr(DataConfig("imagenet100", 100), key))

@@ -55,6 +55,22 @@ def all_fixtures(root):
 
 
 class NoiseTrainingPlotTests(unittest.TestCase):
+    def test_capped_edits_can_be_fewer_than_negative_scores(self):
+        with TemporaryDirectory() as tmp:
+            directory = fixture(Path(tmp), "flip", .96)
+            path = directory / "dpcl_steps.csv"
+            with path.open() as handle:
+                data = list(csv.DictReader(handle))
+            for row in data:
+                row["dpcl_edited_count"] = "1"
+            write_csv(path, data)
+            run = plots.load_run("flip", directory)
+            self.assertEqual(run.edits[-1], (4, 1, 8))
+            data[-1]["dpcl_edited_count"] = "5"
+            write_csv(path, data)
+            with self.assertRaisesRegex(ValueError, "incompatible intervention"):
+                plots.load_run("flip", directory)
+
     def test_sample_weighted_smoothing_before_stride(self):
         series = list(plots.edit_series([(1, 0, 2), (2, 8, 8), (3, 0, 2)], 2))
         self.assertEqual(series, [(1, 0., 0.), (2, 100., 80.), (3, 0., 80.)])

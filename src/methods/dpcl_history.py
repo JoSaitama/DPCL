@@ -7,6 +7,7 @@ from typing import Any, NamedTuple
 import jax
 import jax.numpy as jnp
 
+from src.edit_budget import percent_caps, validate_edit_budget
 from src.methods.base import aggregate
 from src.training.metrics import task_metrics, tree_dot
 
@@ -21,8 +22,11 @@ class HistoricalDPCL:
     beta: float = 0.9
     negative_weight: float = -1.0
     gradient_backend: str = "jvp"
+    bottom_k: int | None = None
+    bottom_k_percent: float | None = None
 
     def __post_init__(self):
+        validate_edit_budget(self.bottom_k, self.bottom_k_percent)
         if isinstance(self.beta, bool) or not math.isfinite(self.beta) or not 0 <= self.beta < 1:
             raise ValueError("reference beta must be finite and in [0, 1)")
         if isinstance(self.negative_weight, bool) or not math.isfinite(self.negative_weight):
@@ -45,6 +49,27 @@ class HistoricalDPCL:
         for mean, param in zip(jax.tree_util.tree_leaves(state.mean), jax.tree_util.tree_leaves(params)):
             if mean.shape != param.shape or not bool(jnp.all(jnp.isfinite(mean))):
                 raise ValueError("DPCL reference has invalid shape or non-finite values")
+
+    def select_edits(self, scores, valid, negative):
+        if self.bottom_k is not None:
+            cap = min(self.bottom_k, scores.shape[0])
+            if cap == 0:
+                return jnp.zeros_like(negative)
+            if cap == scores.shape[0]:
+                return negative
+        elif self.bottom_k_percent is None or self.bottom_k_percent == 100:
+            return negative
+        elif self.bottom_k_percent == 0:
+            return jnp.zeros_like(negative)
+        else:
+            # Exact host-side ceilings, then index by the runtime valid count.
+            caps = jnp.asarray(percent_caps(scores.shape[0], self.bottom_k_percent), dtype=jnp.int32)
+            cap = caps[jnp.sum(valid)]
+        # This axis spans the logical global batch even when sharded over devices.
+        # Stable ties prefer earlier slots; no boolean indexing shrinks the batch.
+        order = jnp.argsort(jnp.where(negative, scores, jnp.inf), stable=True)
+        ranks = jnp.zeros_like(order).at[order].set(jnp.arange(order.size, dtype=order.dtype))
+        return negative & (ranks < cap)
 
     def compute_direction(self, task, params, batch, model_state=None, method_state=None, rng_key=None):
         if method_state is None:
@@ -74,7 +99,8 @@ class HistoricalDPCL:
         else:
             scores = jax.jvp(lambda p: losses_fn(p)[0], (params,), (reference,))[1]
         negative = valid & (scores < 0)
-        weights = jax.lax.stop_gradient(jnp.where(valid, jnp.where(negative, self.negative_weight, 1.), 0.))
+        selected = self.select_edits(scores, valid, negative)
+        weights = jax.lax.stop_gradient(jnp.where(valid, jnp.where(selected, self.negative_weight, 1.), 0.))
         if self.gradient_backend == "audit":
             direction = aggregate(gradients, weights, valid)
         else:
@@ -83,7 +109,7 @@ class HistoricalDPCL:
         ref_sq, raw_sq = tree_dot(reference, reference), tree_dot(raw, raw)
         norm_product = jnp.sqrt(ref_sq * raw_sq)
         metrics.update(dpcl_negative_count=jnp.sum(negative),
-            dpcl_edited_count=jnp.sum(negative) * (self.negative_weight != 1),
+            dpcl_edited_count=jnp.sum(selected) * (self.negative_weight != 1),
             dpcl_negative_weight=jnp.asarray(self.negative_weight),
             dpcl_reference_updates=updates,
             dpcl_reference_norm=jnp.sqrt(ref_sq), dpcl_raw_norm=jnp.sqrt(raw_sq),

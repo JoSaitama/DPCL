@@ -157,6 +157,7 @@ def main(*, default_mode="smoke", default_config=None, default_wait=False):
             "optimizer": config.training.optimizer,
             "reference_beta": config.reference.beta if config.reference.name == "ema" else None,
             "negative_weight": config.method.negative_weight if config.reference.name == "ema" else None,
+            "bottom_k": config.method.bottom_k, "bottom_k_percent": config.method.bottom_k_percent,
             "dpcl_warmup_percent": config.method.dpcl_warmup_percent,
             "dpcl_warmup_steps": dpcl_warmup_steps(config),
             "alternating_first": config.method.alternating_first if config.method.name == "dpcl_policy"

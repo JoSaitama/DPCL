@@ -39,7 +39,7 @@ def directory_identity(directory):
     if match:
         return match[1], int(match[2])
     # Old exports retain their original run names; never rewrite research data.
-    match = re.search(r"_(?:dpcl|dpco)_ema_b[^_]+_w[^_]+_(\d+)(?:_|$)", directory.name)
+    match = re.search(r"_(?:dpcl|dpco)_ema_b[^_]+_w[^_]+_(?:k(?:pct)?[^_]+_)?(\d+)(?:_|$)", directory.name)
     return None, int(match[1]) if match else None
 
 

@@ -187,7 +187,7 @@ def load_run(method, directory, *, load_edits=True):
             edited = numeric(row, f"{prefix}_edited_count", path, integer=True, maximum=batch)
             negative = numeric(row, f"{prefix}_negative_count", path, integer=True, maximum=batch)
             weight = numeric(row, f"{prefix}_negative_weight", path, minimum=-1, maximum=0)
-            if step != len(edits) + 1 or edited != negative or weight != (-1 if method == "flip" else 0):
+            if step != len(edits) + 1 or edited > negative or weight != (-1 if method == "flip" else 0):
                 raise ValueError(f"{path}: noncontiguous updates or incompatible intervention/weight")
             edits.append((step, edited, batch))
         if len(edits) != points[-1]["step"]:

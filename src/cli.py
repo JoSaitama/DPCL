@@ -25,7 +25,8 @@ def main() -> None:
     parser.add_argument("--adam-beta1", type=float)
     parser.add_argument("--adam-beta2", type=float)
     parser.add_argument("--adam-epsilon", type=float)
-    from src.training.launch import cifar_overrides
+    from src.training.launch import add_edit_budget_arguments, cifar_overrides
+    add_edit_budget_arguments(parser)
     parser.add_argument("--noise-type", choices=("clean100", "noisy100", "symmetric", "red"))
     parser.add_argument("--cnwl-noise-percent", type=int, choices=(0, 5, 10, 15, 20, 30, 40, 50, 60, 80))
     parser.add_argument("--is-human", action=argparse.BooleanOptionalAction, default=None)
@@ -40,7 +41,8 @@ def main() -> None:
     if args.method is not None:
         config = replace(config, method=replace(config.method, name=args.method))
         if args.method in ("adam", "sgd"):
-            config = replace(config, method=replace(config.method, negative_weight=-1.),
+            config = replace(config, method=replace(config.method, negative_weight=-1.,
+                bottom_k=None, bottom_k_percent=None),
                 reference=replace(config.reference, name="loss"),
                 training=replace(config.training, optimizer=args.method,
                                  momentum=0. if args.method == "adam" else config.training.momentum,
@@ -58,6 +60,9 @@ def main() -> None:
                                               flip_probability=args.flip_probability))
     if args.negative_weight is not None:
         config = replace(config, method=replace(config.method, negative_weight=args.negative_weight))
+    if args.bottom_k is not None or args.bottom_k_percent is not None:
+        config = replace(config, method=replace(config.method, bottom_k=args.bottom_k,
+                                                bottom_k_percent=args.bottom_k_percent))
     if args.reference_beta is not None:
         config = replace(config, reference=replace(config.reference, beta=args.reference_beta))
     training = {name: getattr(args, name) for name in ("optimizer", "adam_beta1", "adam_beta2", "adam_epsilon")

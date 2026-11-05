@@ -5,6 +5,7 @@ import math
 from pathlib import Path
 import tomllib
 
+from src.edit_budget import validate_edit_budget
 from src.probes.mechanism_config import MechanismConfig
 
 
@@ -57,6 +58,8 @@ class MethodConfig:
     alternating_first: str = "sgd"
     dpcl_warmup_percent: float = 0.0
     negative_weight: float = -1.0
+    bottom_k: int | None = None
+    bottom_k_percent: float | None = None
 
 
 @dataclass(frozen=True)
@@ -195,6 +198,9 @@ class RunConfig:
             raise ValueError("EMA reference requires continuous dpcl without method warmup")
         if self.method.negative_weight != -1 and self.reference.name != "ema":
             raise ValueError("negative_weight requires dpcl with EMA reference")
+        validate_edit_budget(self.method.bottom_k, self.method.bottom_k_percent)
+        if (self.method.bottom_k is not None or self.method.bottom_k_percent is not None) and self.reference.name != "ema":
+            raise ValueError("bottom_k and bottom_k_percent require dpcl with EMA reference")
         if self.training.optimizer not in ("sgd", "adam"):
             raise ValueError("optimizer must be sgd or adam")
         if self.method.name == "adam" and self.training.optimizer != "adam":

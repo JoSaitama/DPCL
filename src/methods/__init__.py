@@ -3,12 +3,15 @@
 
 def create_method(name, *, reference_name="loss", flip_probability=0.25, gradient_backend="audit",
                   policy_mode="continuous", alternating_first="sgd", warmup_steps=0,
-                  reference_beta=0.9, negative_weight=-1.0):
+                  reference_beta=0.9, negative_weight=-1.0, bottom_k=None, bottom_k_percent=None):
     if reference_name == "ema":
         if name != "dpcl" or warmup_steps or policy_mode != "continuous":
             raise ValueError("EMA reference requires continuous dpcl without method warmup")
         from src.methods.dpcl_history import HistoricalDPCL
-        return HistoricalDPCL(reference_beta, negative_weight, gradient_backend)
+        return HistoricalDPCL(reference_beta, negative_weight, gradient_backend,
+                              bottom_k=bottom_k, bottom_k_percent=bottom_k_percent)
+    if bottom_k is not None or bottom_k_percent is not None:
+        raise ValueError("bottom_k and bottom_k_percent require dpcl with EMA reference")
     if isinstance(warmup_steps, bool) or not isinstance(warmup_steps, int) or warmup_steps < 0:
         raise ValueError("warmup_steps must be a nonnegative integer")
     if warmup_steps:

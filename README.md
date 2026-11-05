@@ -37,6 +37,16 @@ Run names keep the resolved settings (`dpcl_ema_b0_w-1` or `dpcl_ema_b0_w0`
 for Self), so existing result readers still work. This comparison does not use
 the professor's fixed bottom-6 selection.
 
+Optionally pass `--bottom-k 6` or `--bottom-k-percent 10` to limit the
+number of edits per global batch. The flags are mutually exclusive; use
+`bottom_k` or `bottom_k_percent` in the TOML `[method]` section. The
+percentage is applied to the valid batch size and rounded up. Both
+forms edit only the lowest strictly negative scores, without filling unused
+slots. Zero disables edits; omitting the budget keeps the existing all-negative
+behavior. In a mixed suite the budget applies to the DPCL and Self arms,
+while plain Adam/SGD are unchanged. Filter still divides by the original
+valid batch size. Run names add `_k6` or `_kpct10` when configured.
+
 CIFAR-100N preparation and training now connects the authors'
 human annotations to the same three-method Adam flow, native 32x32 ResNets, and
 fixed clean/corrupted ordinary-CE evaluation. Use

@@ -5,6 +5,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from src.config import DATASET_CLASSES, DIGITS_MODEL, INATURALIST_PREPARED_DIR, MODELS, MethodConfig, ReferenceConfig, load_config
+from src.edit_budget import validate_edit_budget
 
 
 SELF_METHODS = ("self_flip", "self_filter")
@@ -16,6 +17,13 @@ EXPERIMENT_METHODS = {"adam": ("adam", "loss"), "dpcl": ("dpcl", "ema"),
 POLICY_METHODS = {f"dpcl_{reference}_{mode}": (signal, mode)
                   for reference, signal in (("l", "loss"), ("e", "error"))
                   for mode in ("continuous", "alternating", "half")}
+
+
+def add_edit_budget_arguments(parser):
+    budget = parser.add_mutually_exclusive_group()
+    budget.add_argument("--bottom-k", type=int, help="Edit at most K negative scores per global batch")
+    budget.add_argument("--bottom-k-percent", type=float,
+                        help="Edit at most ceil(P * valid global batch size / 100) negative scores")
 
 
 def add_overrides(parser, *, multiple=False):
@@ -35,6 +43,7 @@ def add_overrides(parser, *, multiple=False):
                         help="Raw batch-gradient EMA decay; self_flip and self_filter always use 0")
     parser.add_argument("--negative-weight", type=float,
                         help="DPCL contribution for alignment < 0: 0 filter, -1 flip; any finite scalar")
+    add_edit_budget_arguments(parser)
     parser.add_argument("--adam-beta1", type=float)
     parser.add_argument("--adam-beta2", type=float)
     parser.add_argument("--adam-epsilon", type=float)
@@ -114,7 +123,8 @@ def cifar_cli_args(args):
     return command
 
 
-DPCL_OPTIONS = ("optimizer", "reference_beta", "negative_weight", "adam_beta1", "adam_beta2", "adam_epsilon")
+DPCL_OPTIONS = ("optimizer", "reference_beta", "negative_weight", "bottom_k", "bottom_k_percent",
+                "adam_beta1", "adam_beta2", "adam_epsilon")
 
 
 def dpcl_overrides(args):
@@ -156,6 +166,7 @@ def resolve_config(path, *, mode, steps=None, batch_size=None, seed=None,
                    alternating_first=None, dpcl_warmup_percent=None,
                    momentum=None, nesterov=None, learning_rate=None, lr_schedule=None,
                    min_learning_rate=None, optimizer=None, reference_beta=None, negative_weight=None,
+                   bottom_k=None, bottom_k_percent=None,
                    adam_beta1=None, adam_beta2=None, adam_epsilon=None,
                    noise_type=None, is_human=None, noise_seed=None, noise_percent=None, download=None,
                    label_noise_percent=None,
@@ -181,7 +192,9 @@ def resolve_config(path, *, mode, steps=None, batch_size=None, seed=None,
             name, reference = EXPERIMENT_METHODS[method]
             weight = EDIT_WEIGHTS.get(method,
                 config.method.negative_weight if config.reference.name == "ema" else -1.)
-            selected_method = MethodConfig(name, negative_weight=weight if reference == "ema" else -1.)
+            selected_method = MethodConfig(name, negative_weight=weight if reference == "ema" else -1.,
+                bottom_k=config.method.bottom_k if reference == "ema" else None,
+                bottom_k_percent=config.method.bottom_k_percent if reference == "ema" else None)
         config = replace(config, method=selected_method,
                          reference=replace(config.reference, name=reference))
         if method in ("adam", "dpcl") or method in EDIT_WEIGHTS:
@@ -204,6 +217,14 @@ def resolve_config(path, *, mode, steps=None, batch_size=None, seed=None,
         config = replace(config, method=replace(config.method, negative_weight=negative_weight))
     elif negative_weight is not None and config.method.name != "adam":
         raise ValueError("negative_weight requires dpcl with EMA reference")
+    validate_edit_budget(bottom_k, bottom_k_percent)
+    if bottom_k is not None or bottom_k_percent is not None:
+        # One suite can share a budget across edited arms and plain baselines.
+        if config.reference.name == "ema":
+            config = replace(config, method=replace(config.method, bottom_k=bottom_k,
+                                                    bottom_k_percent=bottom_k_percent))
+        elif config.method.name not in ("adam", "sgd"):
+            raise ValueError("bottom_k and bottom_k_percent require dpcl with EMA reference")
     if alternating_first is not None:
         if alternating_first not in ("sgd", "dpcl"):
             raise ValueError("alternating_first must be sgd or dpcl")
