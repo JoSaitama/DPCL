@@ -21,6 +21,8 @@ ASSETS = {name: (BASE_URL + name, "md5", digest) for name, digest in (
     ("t10k-images-idx3-ubyte.gz", "9fb629c4189551a2d022fa330f9573f3"),
     ("t10k-labels-idx1-ubyte.gz", "ec29112dd5afa0611ce80d1b7f02629c"))}
 FORMAT = "dpcl-mnist-v1"
+# The repository rename changed the marker, not the on-disk MNIST schema.
+READABLE_FORMATS = (FORMAT, "dpco-mnist-v1")
 FILES = {"train_images.npy", "test_images.npy", "labels.npz"}
 
 
@@ -75,7 +77,7 @@ def verify_prepared(root):
     directory = Path(root) / "prepared"
     manifest = json.loads((directory / "manifest.json").read_bytes())
     digest = hashlib.sha256(canonical(manifest)).hexdigest()
-    if (manifest.get("format") != FORMAT or (directory / "manifest.sha256").read_text().strip() != digest
+    if (manifest.get("format") not in READABLE_FORMATS or (directory / "manifest.sha256").read_text().strip() != digest
             or json.loads((directory / "complete.json").read_bytes()) != {"manifest_sha256": digest}):
         raise ValueError("MNIST completion/manifest identity mismatch")
     if set(manifest["files"]) != FILES:
